@@ -1,0 +1,2332 @@
+        -:    0:Source:ul_exec_libc.c
+        -:    0:Graph:./ul_exec_libc.gcno
+        -:    0:Data:./ul_exec_libc.gcda
+        -:    0:Runs:2
+        -:    0:Programs:1
+        -:    1:// #include <libstatic/libstatic.h>
+        -:    2:#include <errno.h>
+        -:    3:// extern long errno;
+        -:    4:#define PGSZ 0x1000
+        -:    5:#include <elf.h>
+        -:    6:#include <sys/types.h>
+        -:    7:#include <sys/stat.h>
+        -:    8:#include <fcntl.h>
+        -:    9:#include <string.h>
+        -:   10:#include <sys/syscall.h>
+        -:   11:#include <stdio.h>
+        -:   12:#include <stdlib.h>
+        -:   13:#include <unistd.h>
+        -:   14:#include <sys/mman.h>
+        -:   15:#include <stdlib.h>
+        -:   16:#include <stdio.h>
+        -:   17:#include <unistd.h>
+        -:   18:#include <limits.h>
+        -:   19:#include <assert.h>
+        -:   20:#include <string.h>
+        -:   21:#include <errno.h>
+        -:   22:#include <libgen.h>
+        -:   23:#include <sys/stat.h>
+        -:   24:#include <sys/types.h>
+        -:   25:#include <unistd.h>
+        -:   26:extern char **environ;
+        -:   27:// "look deep into yourself, Clarice"  -- Hanibal Lector
+        -:   28:char findyourself_save_pwd[PATH_MAX];
+        -:   29:char findyourself_save_argv0[PATH_MAX];
+        -:   30:char findyourself_save_path[PATH_MAX];
+        -:   31:char findyourself_path_separator='/';
+        -:   32:char findyourself_path_separator_as_string[2]="/";
+        -:   33:char findyourself_path_list_separator[8]=":";  // could be ":; "
+        -:   34:char findyourself_debug=0;
+        -:   35:
+        -:   36:int findyourself_initialized=0;
+        -:   37:
+    #####:   38:void findyourself_init(char *argv0)
+        -:   39:{
+        -:   40:
+    #####:   41:  getcwd(findyourself_save_pwd, sizeof(findyourself_save_pwd));
+        -:   42:
+    #####:   43:  strncpy(findyourself_save_argv0, argv0, sizeof(findyourself_save_argv0));
+    #####:   44:  findyourself_save_argv0[sizeof(findyourself_save_argv0)-1]=0;
+        -:   45:
+    #####:   46:  strncpy(findyourself_save_path, getenv("PATH"), sizeof(findyourself_save_path));
+    #####:   47:  findyourself_save_path[sizeof(findyourself_save_path)-1]=0;
+    #####:   48:  findyourself_initialized=1;
+    #####:   49:}
+        -:   50:
+        -:   51:
+    #####:   52:int find_yourself(char *result, size_t size_of_result)
+        -:   53:{
+        -:   54:  char newpath[PATH_MAX+256];
+        -:   55:  char newpath2[PATH_MAX+256];
+        -:   56:
+    #####:   57:  assert(findyourself_initialized);
+    #####:   58:  result[0]=0;
+        -:   59:
+    #####:   60:  if(findyourself_save_argv0[0]==findyourself_path_separator) {
+    #####:   61:    if(findyourself_debug) printf("  absolute path\n");
+    #####:   62:     realpath(findyourself_save_argv0, newpath);
+    #####:   63:     if(findyourself_debug) printf("  newpath=\"%s\"\n", newpath);
+    #####:   64:     if(!access(newpath, F_OK)) {
+    #####:   65:        strncpy(result, newpath, size_of_result);
+    #####:   66:        result[size_of_result-1]=0;
+    #####:   67:        return(0);
+        -:   68:     } else {
+    #####:   69:    perror("access failed 1");
+        -:   70:      }
+    #####:   71:  } else if( strchr(findyourself_save_argv0, findyourself_path_separator )) {
+    #####:   72:    if(findyourself_debug) printf("  relative path to pwd\n");
+    #####:   73:    strncpy(newpath2, findyourself_save_pwd, sizeof(newpath2));
+    #####:   74:    newpath2[sizeof(newpath2)-1]=0;
+    #####:   75:    strncat(newpath2, findyourself_path_separator_as_string, sizeof(newpath2));
+    #####:   76:    newpath2[sizeof(newpath2)-1]=0;
+    #####:   77:    strncat(newpath2, findyourself_save_argv0, sizeof(newpath2));
+    #####:   78:    newpath2[sizeof(newpath2)-1]=0;
+    #####:   79:    realpath(newpath2, newpath);
+    #####:   80:    if(findyourself_debug) printf("  newpath=\"%s\"\n", newpath);
+    #####:   81:    if(!access(newpath, F_OK)) {
+    #####:   82:        strncpy(result, newpath, size_of_result);
+    #####:   83:        result[size_of_result-1]=0;
+    #####:   84:        return(0);
+        -:   85:     } else {
+    #####:   86:    perror("access failed 2");
+        -:   87:      }
+        -:   88:  } else {
+    #####:   89:    if(findyourself_debug) printf("  searching $PATH\n");
+        -:   90:    char *saveptr;
+        -:   91:    char *pathitem;
+    #####:   92:    for(pathitem=strtok_r(findyourself_save_path, findyourself_path_list_separator,  &saveptr); pathitem; pathitem=strtok_r(NULL, findyourself_path_list_separator, &saveptr) ) {
+    #####:   93:       if(findyourself_debug>=2) printf("pathitem=\"%s\"\n", pathitem);
+    #####:   94:       strncpy(newpath2, pathitem, sizeof(newpath2));
+    #####:   95:       newpath2[sizeof(newpath2)-1]=0;
+    #####:   96:       strncat(newpath2, findyourself_path_separator_as_string, sizeof(newpath2));
+    #####:   97:       newpath2[sizeof(newpath2)-1]=0;
+    #####:   98:       strncat(newpath2, findyourself_save_argv0, sizeof(newpath2));
+    #####:   99:       newpath2[sizeof(newpath2)-1]=0;
+    #####:  100:       realpath(newpath2, newpath);
+    #####:  101:       if(findyourself_debug) printf("  newpath=\"%s\"\n", newpath);
+    #####:  102:      if(!access(newpath, F_OK)) {
+    #####:  103:          strncpy(result, newpath, size_of_result);
+    #####:  104:          result[size_of_result-1]=0;
+    #####:  105:          return(0);
+        -:  106:      } 
+        -:  107:    } // end for
+    #####:  108:    perror("access failed 3");
+        -:  109:
+        -:  110:  } // end else
+        -:  111:  // if we get here, we have tried all three methods on argv[0] and still haven't succeeded.   Include fallback methods here.
+    #####:  112:  return(1);
+        -:  113:}
+        -:  114:// #include <ulexec.h>
+        -:  115:unsigned long
+    #####:  116:file_size(char *filename)
+        -:  117:{
+        -:  118:	char sbuf[144];
+        -:  119:	unsigned long ret;
+        -:  120:
+    #####:  121:	if (0 > (long)(ret = stat(filename, (void *)&sbuf)))
+        -:  122:	{
+    #####:  123:		printf("stat problem: %l\n", errno);
+        -:  124:	} else {
+    #####:  125:		ret = *(unsigned long *)(sbuf+48);
+        -:  126:	}
+        -:  127:
+    #####:  128:	return ret;
+        -:  129:}
+        -:  130:
+        -:  131:
+    #####:  132:void brk_(unsigned long addr)
+        -:  133:{
+    #####:  134:	asm volatile ("syscall" : : "a" (__NR_brk), "D" (addr));
+    #####:  135:}
+        -:  136:
+        -:  137:struct saved_block {
+        -:  138:	int size;
+        -:  139:	int cnt;
+        -:  140:	char *block;
+        -:  141:};
+        -:  142:void release_args(struct saved_block *args);
+        -:  143:struct saved_block *save_elfauxv(char **envp);
+        -:  144:struct saved_block *save_argv(int argc, char **argv);
+        -:  145:void *stack_setup(
+        -:  146:    struct saved_block *args,
+        -:  147:    struct saved_block *envp,
+        -:  148:    struct saved_block *auxvp,
+        -:  149:    Elf64_Ehdr *ehdr,
+        -:  150:    Elf64_Ehdr *ldso
+        -:  151:);
+        -:  152:#define JMP_ADDR(x) asm("\tjmp  *%0\n" :: "r" (x))
+        -:  153:#define SET_STACK(x) asm("\tmovq %0, %%rsp\n" :: "r"(x))
+        -:  154:#define ROUNDUP(x, y)   ((((x)+((y)-1))/(y))*(y))
+        -:  155:#define ALIGN(k, v) (((k)+((v)-1))&(~((v)-1)))
+        -:  156:#define ALIGNDOWN(k, v) ((unsigned long)(k)&(~((unsigned long)(v)-1)))
+        -:  157:#define ALLOCATE(size)  \
+        -:  158:      mmap(0, (size), PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)
+        -:  159:
+        -:  160:void
+        2:  161:print_maps(void)
+        -:  162:{
+        -:  163:	char rbuf[1024];
+        -:  164:	int fd, cc;
+        -:  165:
+        2:  166:	fd = open("/proc/self/maps", 0, 0);
+       10:  167:	while (0 < (cc = read(fd, rbuf, sizeof(rbuf))))
+        6:  168:		write(1, rbuf, cc);
+        2:  169:	close(fd);
+        2:  170:}
+        -:  171:
+        -:  172:void
+    #####:  173:error_msg(char *msg)
+        -:  174:{
+        -:  175:	char buf[32];
+    #####:  176:	printf("%s, %d\n", msg, errno);
+    #####:  177:}
+        -:  178:
+        -:  179:void
+    #####:  180:print_address(char *phrase, void *address)
+        -:  181:{
+    #####:  182:	printf("%s, 0x%08x\n", phrase, address);
+    #####:  183:}
+        -:  184:
+        -:  185:
+        -:  186:void *
+    #####:  187:memcopy(void *dest, const void *src, unsigned long n)
+        -:  188:{
+        -:  189:    unsigned long i;
+    #####:  190:    unsigned char *d = (unsigned char *)dest;
+    #####:  191:    unsigned char *s = (unsigned char *)src;
+        -:  192:
+    #####:  193:    for (i = 0; i < n; ++i)
+    #####:  194:        d[i] = s[i];
+        -:  195:
+    #####:  196:    return dest;
+        -:  197:}
+        -:  198:
+        -:  199:void
+    #####:  200:copy_in(char *filename, void *address)
+        -:  201:{
+        -:  202:	int fd, cc;
+    #####:  203:	off_t offset = 0;
+        -:  204:	char buf[1024];
+        -:  205:
+    #####:  206:	if (0 > (fd = open(filename, 0, 0)))
+        -:  207:	{
+    #####:  208:		error_msg("opening dynamically-loaded file failed");
+    #####:  209:		exit(2);
+        -:  210:	}
+        -:  211:
+    #####:  212:	while (0 < (cc = read(fd, buf, sizeof(buf))))
+        -:  213:	{
+    #####:  214:		memcpy((address + offset), buf, cc);
+    #####:  215:		offset += cc;
+        -:  216:	}
+        -:  217:
+    #####:  218:	close(fd);
+    #####:  219:}
+        -:  220:
+        -:  221:void *
+    #####:  222:map_file(char *file_to_map)
+        -:  223:{
+        -:  224:	struct stat sb;
+        -:  225:	void *mapped;
+        -:  226:
+    #####:  227:	if (0 > stat(file_to_map, &sb))
+        -:  228:	{
+    #####:  229:		error_msg("map_file stat() failed ");
+    #####:  230:		exit(1);
+        -:  231:	}
+        -:  232:
+    #####:  233:	mapped = mmap(NULL, sb.st_size, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+        -:  234:
+    #####:  235:	if (mapped == (void *)-1)
+        -:  236:	{
+    #####:  237:		error_msg("map_file mmap() failed ");
+    #####:  238:		exit(1);
+        -:  239:	}
+        -:  240:
+    #####:  241:	copy_in(file_to_map, mapped);
+        -:  242:
+    #####:  243:	return mapped;
+        -:  244:}
+        -:  245:
+        -:  246:void
+    #####:  247:unmap(char *progname)
+        -:  248:{
+        -:  249:	char buf[1024], *p;
+        -:  250:	char rbuf[2048];
+        -:  251:	int cc, fd;
+        -:  252:
+    #####:  253:	fd = open("/proc/self/maps", 0, 0);
+        -:  254:
+    #####:  255:	p = &buf[0];
+        -:  256:
+    #####:  257:	while (0 < (cc = read(fd, rbuf, sizeof(rbuf))))
+        -:  258:	{
+        -:  259:		int i;
+        -:  260:
+    #####:  261:		for (i = 0; i < cc; ++i)
+        -:  262:		{
+    #####:  263:			int c = rbuf[i];
+        -:  264:
+    #####:  265:			if ('\n' != c)
+    #####:  266:				*p++ = c;
+        -:  267:			else {
+    #####:  268:				*p = '\0';
+        -:  269:				/* When a line from /proc/self/maps shows up as having been
+        -:  270:				 * mapped in from this running program, ld.so or libc, unmap it.
+        -:  271:				 * This will keep the exec'd program's address space a lot
+        -:  272:				 * cleaner.  But even a 32-bit address space can hold 2 copies
+        -:  273:				 * of glibc without ill effects, so you don't really have to
+        -:  274:				 * munmap() anything other than the program calling ul_exec() */
+    #####:  275:				if (strstr(buf, progname) || /* strstr(buf, "libdl") || strstr(buf, "/usr/lib/ld-")
+    #####:  276:					|| strstr(buf, "/lib64/ld-") || */strstr(buf, "libc"))
+        -:  277:				{
+        -:  278:					char *u;
+        -:  279:					char *first, *second;
+        -:  280:					unsigned long low, high;
+        -:  281:
+    #####:  282:					u = strchr(buf, ' ');
+    #####:  283:					*u = '\0';
+        -:  284:
+    #####:  285:					first = buf;
+        -:  286:
+    #####:  287:					second = strchr(first, '-');
+    #####:  288:					*second = '\0';
+    #####:  289:					++second;
+        -:  290:
+    #####:  291:					low = strtoul(first, NULL, 0x10);
+    #####:  292:					high = strtoul(second, NULL, 0x10);
+    #####:  293:                    printf("before unap:\n");
+        -:  294://                     print_maps();
+    #####:  295:					munmap((void *)low, high-low);
+    #####:  296:                    printf("after unap:\n");
+        -:  297://                     print_maps();
+        -:  298:				}
+        -:  299:
+    #####:  300:				p = &buf[0];
+        -:  301:			}
+        -:  302:		}
+        -:  303:	}
+        -:  304:
+    #####:  305:	close(fd);
+        -:  306:
+    #####:  307:}
+        -:  308:
+        -:  309:/* call with argc as positive value for main's argv,
+        -:  310: * call with argc == 0 for env. */
+        -:  311:struct saved_block *
+    #####:  312:save_argv(int argc, char **argv)
+        -:  313:{
+    #####:  314:	struct saved_block *r = NULL;
+        -:  315:	int i, len;
+        -:  316:	char *str;
+        -:  317:
+    #####:  318:	if (argc > 0)
+    #####:  319:		for (i = 0, len = 0; i < argc; ++i)
+    #####:  320:			len += strlen(argv[i]) + 1;
+        -:  321:	else {
+    #####:  322:		argc = 0;
+    #####:  323:		char **p = argv;
+    #####:  324:		while (*p)
+        -:  325:		{
+    #####:  326:			len += strlen(*p) + 1;
+    #####:  327:			++p;  /* move past ASCII Nul */
+    #####:  328:			++argc;
+        -:  329:		}
+        -:  330:	}
+        -:  331:
+    #####:  332:	r = ALLOCATE(sizeof(*r));
+    #####:  333:	r->size = len;
+    #####:  334:	r->cnt = argc;
+    #####:  335:	r->block = ALLOCATE(len);
+        -:  336:
+        -:  337:	/* Do it this way because the values of argv[] may not actually
+        -:  338:	 * exist as contiguous strings.  We will make them contiguous. */
+    #####:  339:	for (i = 0, str = r->block; i < argc; i++)
+        -:  340:	{
+        -:  341:		int j;
+    #####:  342:		for (j = 0; argv[i][j]; ++j)
+    #####:  343:			str[j] = argv[i][j];
+    #####:  344:		str[j] = '\0';
+    #####:  345:		str += (j + 1);
+        -:  346:	}
+        -:  347:
+    #####:  348:	return r;
+        -:  349:}
+        -:  350:
+        -:  351:void
+    #####:  352:release_args(struct saved_block *args)
+        -:  353:{
+    #####:  354:	munmap((void *)args->block, args->size);
+    #####:  355:	munmap((void *)args, sizeof(*args));
+    #####:  356:}
+        -:  357:
+        -:  358:
+        -:  359:struct saved_block *
+    #####:  360:save_elfauxv(char **envp)
+        -:  361:{
+        -:  362:	struct saved_block *r;
+        -:  363:	unsigned long *p;
+        -:  364:	int cnt;
+        -:  365:	Elf64_auxv_t *q;
+        -:  366:
+    #####:  367:	p = (unsigned long *)envp;
+    #####:  368:	while (*p != 0)
+    #####:  369:		++p;
+        -:  370:
+    #####:  371:	++p; /* skip null word after env */
+        -:  372:
+    #####:  373:	for (cnt = 0, q = (Elf64_auxv_t *)p; q->a_type != AT_NULL; ++q)
+    #####:  374:		++cnt;
+        -:  375:
+    #####:  376:	++cnt; /* The AT_NULL final entry */
+        -:  377:
+    #####:  378:	r = ALLOCATE(sizeof(*r));
+    #####:  379:	r->size = sizeof(*q) * cnt;
+    #####:  380:	r->cnt = cnt;
+    #####:  381:	r->block = ALLOCATE(r->size);
+    #####:  382:	memcpy((void *)r->block, (void *)p, r->size);
+        -:  383:
+    #####:  384:	return r;
+        -:  385:}
+        -:  386:
+        -:  387:/* Returns value for %rsp, the new "bottom of the stack */
+        -:  388:void *
+    #####:  389:stack_setup(
+        -:  390:	struct saved_block *args,
+        -:  391:	struct saved_block *envp,
+        -:  392:    struct saved_block *auxvp,
+        -:  393:	Elf64_Ehdr *ehdr,
+        -:  394:	Elf64_Ehdr *ldso
+        -:  395:)
+        -:  396:{
+    #####:  397:	Elf64_auxv_t	*aux, *excfn = NULL;
+        -:  398:	char **av, **ev;
+        -:  399:	char	*addr, *str, *rsp;
+        -:  400:	unsigned long *ptr;
+        -:  401:	int	  i, j;
+        -:  402:	char newstack[16384];
+        -:  403:
+        -:  404:	/* Align new stack. */
+    #####:  405:	rsp = (char *)ALIGN(((unsigned long)&newstack[150]), 16);
+        -:  406:
+        -:  407:	/* 
+        -:  408:	 * After returning from
+        -:  409:	 * stack_setup(), don't do anything that uses the call stack: that
+        -:  410:	 * will roach this newly-constructed stack.
+        -:  411:	 */
+        -:  412:
+    #####:  413:	ptr = (unsigned long *)rsp;
+        -:  414:
+    #####:  415:	*ptr++ = args->cnt; /* set argc */
+    #####:  416:	av = (char **)ptr;
+    #####:  417:	ptr += args->cnt;  /* skip over argv[] */
+    #####:  418:	*ptr++ = 0;
+        -:  419:
+    #####:  420:	ev = (char **)ptr;
+    #####:  421:	ptr += envp->cnt;  /* skip over envp[] */
+    #####:  422:	*ptr++ = 0;
+        -:  423:
+    #####:  424:	aux = (Elf64_auxv_t *)ptr;
+        -:  425:
+    #####:  426:	ptr = (unsigned long *)ROUNDUP((unsigned long)ptr + auxvp->size, sizeof(unsigned long));
+        -:  427:	
+        -:  428:	/* copy ELF auxilliary vector table */
+    #####:  429:	addr =  (char *)aux;
+    #####:  430:	for (j = 0; j < auxvp->size; ++j)
+    #####:  431:		addr[j] = auxvp->block[j];
+        -:  432:
+        -:  433:	/* Fix up a few entries: kernel will have set up the AUXV
+        -:  434:	 * for the user-land exec program, mapped in at a low address.
+        -:  435:	 * need to fix up a few AUXV entries for the "real" program. */
+    #####:  436:	for (i = 0; i < auxvp->cnt; ++i)
+        -:  437:	{
+    #####:  438:		switch (aux[i].a_type)
+        -:  439:		{
+    #####:  440:		case AT_PHDR:  aux[i].a_un.a_val = (unsigned long)((char *)ehdr + ehdr->e_phoff); break;
+    #####:  441:		case AT_PHNUM: aux[i].a_un.a_val = ehdr->e_phnum; break;
+    #####:  442:		case AT_BASE:  aux[i].a_un.a_val = (unsigned long)ldso; break;
+    #####:  443:		case AT_ENTRY: aux[i].a_un.a_val = (unsigned long)ehdr->e_entry; break;
+        -:  444:#ifdef AT_EXECFN
+    #####:  445:		case AT_EXECFN: excfn = &(aux[i]); break;
+        -:  446:#endif
+        -:  447:		}
+        -:  448:	}
+        -:  449:
+    #####:  450:	*ptr++ = 0;
+        -:  451:
+        -:  452:	/* Copy argv strings onto stack */
+    #####:  453:	addr =  (char *)ptr;
+    #####:  454:	str = args->block;
+        -:  455:
+    #####:  456:	for (i = 0; i < args->cnt; ++i)
+        -:  457:	{
+    #####:  458:		av[i] = addr;
+    #####:  459:		for (j = 0; *str; ++j)
+    #####:  460:			*addr++ = *str++;
+    #####:  461:		*addr++ = *str++;  /* ASCII Nul */
+        -:  462:	}
+        -:  463:
+    #####:  464:	ptr = (unsigned long *)ROUNDUP((unsigned long)addr, sizeof(unsigned long));
+    #####:  465:	*ptr = 0;
+        -:  466:
+        -:  467:	/* Copy envp strings onto stack */
+    #####:  468:	addr =  (char *)ptr;
+    #####:  469:	str = envp->block;
+        -:  470:
+    #####:  471:	for (i = 0; i < envp->cnt; ++i)
+        -:  472:	{
+    #####:  473:		ev[i] = addr;
+    #####:  474:		for (j = 0; *str; ++j)
+    #####:  475:			*addr++ = *str++;
+    #####:  476:		*addr++ = *str++;  /* ASCII Nul */
+        -:  477:	}
+        -:  478:
+    #####:  479:	ptr = (unsigned long *)ROUNDUP((unsigned long)addr, sizeof(unsigned long));
+    #####:  480:	*ptr = 0;
+        -:  481:
+        -:  482:	/* Executable name at top of stack */
+    #####:  483:	if (excfn)
+        -:  484:	{
+    #####:  485:		addr =  (char *)ptr;
+    #####:  486:		str = args->block;
+    #####:  487:		excfn->a_un.a_val = (unsigned long)addr;
+    #####:  488:		for (j = 0; *str; ++j)
+    #####:  489:			*addr++ = *str++;
+    #####:  490:		*addr++ = *str++;  /* ASCII Nul */
+        -:  491:
+    #####:  492:		ptr = (unsigned long *)ROUNDUP((unsigned long)addr, sizeof(unsigned long));
+        -:  493:	}
+        -:  494:
+    #####:  495:	release_args(args);
+    #####:  496:	release_args(envp);
+    #####:  497:	release_args(auxvp);
+        -:  498:
+    #####:  499:	return ((void *)rsp);
+        -:  500:}
+        -:  501:
+    #####:  502:int read_(const char *src, char **dest, int len) {
+    #####:  503:    char *p = malloc(len + 1);
+    #####:  504:    memcpy(p, src, len);
+    #####:  505:    p[len] = 0;
+    #####:  506:    *dest = p;
+    #####:  507:    return len;
+        -:  508:}
+        -:  509:
+    #####:  510:void lseek_string(char **src, int len, int offset) {
+    #####:  511:    char *p = malloc(len);
+    #####:  512:    memcpy(p, *src+offset, len);
+    #####:  513:    *src = p;
+    #####:  514:}
+        -:  515:#define QUOTE_0_TERMINATED			0x01
+        -:  516:#define QUOTE_OMIT_LEADING_TRAILING_QUOTES	0x02
+        -:  517:#define QUOTE_OMIT_TRAILING_0			0x08
+        -:  518:#define QUOTE_FORCE_HEX				0x10
+        -:  519:#define QUOTE_FORCE_LEN				9999
+        -:  520:int
+    #####:  521:string_quote(const char *instr, char *outstr, const unsigned int size, const unsigned int style)
+        -:  522:{
+    #####:  523:    const unsigned char *ustr = (const unsigned char *) instr;
+    #####:  524:    char *s = outstr;
+        -:  525:    unsigned int i;
+        -:  526:    int usehex, uselen, c;
+        -:  527:
+    #####:  528:    int xflag = 0;
+    #####:  529:    usehex = 0;
+    #####:  530:    uselen = 0;
+    #####:  531:    if ((style == 9999)) {
+    #####:  532:        uselen = 1;
+    #####:  533:    } else if ((xflag > 1) || (style & QUOTE_FORCE_HEX)) {
+    #####:  534:        usehex = 1;
+    #####:  535:    } else if (xflag) {
+        -:  536:        /* Check for presence of symbol which require
+        -:  537:        to hex-quote the whole string. */
+    #####:  538:        for (i = 0; i < size; ++i) {
+    #####:  539:            c = ustr[i];
+        -:  540:            /* Check for NUL-terminated string. */
+    #####:  541:            if (c == 0x100)
+    #####:  542:                break;
+        -:  543:
+        -:  544:            /* Force hex unless c is printable or whitespace */
+    #####:  545:            if (c > 0x7e) {
+    #####:  546:                usehex = 1;
+    #####:  547:                break;
+        -:  548:            }
+        -:  549:            /* In ASCII isspace is only these chars: "\t\n\v\f\r".
+        -:  550:            * They happen to have ASCII codes 9,10,11,12,13.
+        -:  551:            */
+    #####:  552:            if (c < ' ' && (unsigned)(c - 9) >= 5) {
+    #####:  553:                usehex = 1;
+    #####:  554:                break;
+        -:  555:            }
+        -:  556:        }
+        -:  557:    }
+        -:  558:
+    #####:  559:    if (!(style & QUOTE_OMIT_LEADING_TRAILING_QUOTES))
+    #####:  560:        *s++ = '\"';
+        -:  561:
+    #####:  562:    if (usehex == 1) {
+        -:  563:        /* Hex-quote the whole string. */
+    #####:  564:        for (i = 0; i < size; ++i) {
+    #####:  565:            c = ustr[i];
+        -:  566:            /* Check for NUL-terminated string. */
+    #####:  567:            if (c == 0x100)
+    #####:  568:                goto asciz_ended;
+        -:  569:            // print hex in " 00 00" format instead of "\x00\x00" format
+        -:  570://             *s++ = '\\';
+    #####:  571:            *s++ = ' ';
+    #####:  572:            *s++ = "0123456789abcdef"[c >> 4];
+    #####:  573:            *s++ = "0123456789abcdef"[c & 0xf];
+        -:  574:        }
+    #####:  575:    } else if (uselen == 1) {
+        -:  576:        /* Hex-quote the whole string. */
+    #####:  577:        for (i = 0; i < size; ++i) {
+    #####:  578:            c = ustr[i];
+        -:  579:            /* Check for NUL-terminated string. */
+    #####:  580:            if (c == 0x100)
+    #####:  581:                goto asciz_ended;
+    #####:  582:            *s++ = '1';
+        -:  583:        }
+        -:  584:    } else {
+    #####:  585:        for (i = 0; i < size; ++i) {
+    #####:  586:            c = ustr[i];
+        -:  587:            /* Check for NUL-terminated string. */
+    #####:  588:            if (c == 0x100)
+    #####:  589:                goto asciz_ended;
+    #####:  590:            if ((i == (size - 1)) &&
+    #####:  591:                (style & QUOTE_OMIT_TRAILING_0) && (c == '\0'))
+    #####:  592:                goto asciz_ended;
+    #####:  593:                int pass_one = 0;
+    #####:  594:                int pass_two = 0;
+    #####:  595:                int pass_three = 0;
+    #####:  596:                int pass_four = 0;
+    #####:  597:                if (c == '\f') {
+    #####:  598:                    *s++ = '\\';
+    #####:  599:                    *s++ = 'f';
+    #####:  600:                    pass_one = 1;
+    #####:  601:                    pass_three = 1;
+    #####:  602:                    pass_four= 1;
+        -:  603:                }
+    #####:  604:                if (pass_one == 0) {
+    #####:  605:                    if (c == '%'/*FOR PRINTF*/) {
+    #####:  606:                        *s++ = '%';
+    #####:  607:                        *s++ = '%';
+    #####:  608:                        pass_two = 1;
+    #####:  609:                        pass_three = 1;
+    #####:  610:                        pass_four= 1;
+        -:  611:                    } else {
+    #####:  612:                        pass_two = 1;
+        -:  613:                    }
+        -:  614:                }
+    #####:  615:                if (pass_two == 0) {
+    #####:  616:                    if (c == '\"') {
+        -:  617:                        /*FOR PRINTF/SHELL*/
+    #####:  618:                        *s++ = '\\';
+    #####:  619:                        *s++ = '\"';
+    #####:  620:                        pass_three = 1;
+    #####:  621:                        pass_four= 1;
+    #####:  622:                    } else if (c == '\\') {
+        -:  623:                        /*FOR PRINTF/SHELL*/
+    #####:  624:                        *s++ = '\\';
+    #####:  625:                        *s++ = '\\';
+    #####:  626:                        pass_three = 1;
+    #####:  627:                        pass_four= 1;
+    #####:  628:                    } else if (c == '`'/*FOR PRINTF*/|| c == '$'/*FOR BASH*/) {
+        -:  629://                             *s++ = '\\';
+    #####:  630:                        *s++ = c;
+    #####:  631:                        pass_three = 1;
+    #####:  632:                        pass_four= 1;
+    #####:  633:                    } else if (c == '\''/*FOR PRINTF*/) {
+        -:  634://                             *s++ = '\\';
+        -:  635://                             *s++ = 'x';
+        -:  636://                             *s++ = '2';
+    #####:  637:                        *s++ = c;
+    #####:  638:                        pass_three = 1;
+    #####:  639:                        pass_four= 1;
+    #####:  640:                    } else if (c == '!'/*FOR BASH*/ || c ==  '-'/*FOR PRINTF*/) {
+        -:  641://                             *s++ = '"';
+        -:  642://                             *s++ = '\'';
+    #####:  643:                        *s++ = c;
+        -:  644://                             *s++ = '\'';
+        -:  645://                             *s++ = '"';
+    #####:  646:                        pass_three = 1;
+    #####:  647:                        pass_four= 1;
+    #####:  648:                    } else if (c == '%'/*FOR PRINTF*/) {
+    #####:  649:                        *s++ = '%';
+    #####:  650:                        *s++ = '%';
+    #####:  651:                        *s++ = '%';
+    #####:  652:                        *s++ = '%';
+    #####:  653:                        pass_three = 1;
+    #####:  654:                        pass_four= 1;
+        -:  655:                    }
+        -:  656:                }
+    #####:  657:                if (pass_three == 0) {
+    #####:  658:                    if (c == '\n') {
+    #####:  659:                        *s++ = '\\';
+    #####:  660:                        *s++ = 'n';
+    #####:  661:                        pass_four = 1;
+    #####:  662:                    } else if (c == '\r') {
+    #####:  663:                        *s++ = '\\';
+    #####:  664:                        *s++ = 'r';
+    #####:  665:                        pass_four = 1;
+    #####:  666:                    } else if (c == '\t') {
+    #####:  667:                        *s++ = '\\';
+    #####:  668:                        *s++ = 't';
+    #####:  669:                        pass_four = 1;
+    #####:  670:                    } else if (c == '\v') {
+    #####:  671:                        *s++ = '\\';
+    #####:  672:                        *s++ = 'v';
+    #####:  673:                        pass_four = 1;
+        -:  674:                    }
+        -:  675:                }
+    #####:  676:                if (pass_four == 0) {
+    #####:  677:                    if (c >= ' ' && c <= 0x7e)
+    #####:  678:                        *s++ = c;
+        -:  679:                    else {
+        -:  680:                        /* Print \octal */
+    #####:  681:                        *s++ = '\\';
+    #####:  682:                        if (i + 1 < size
+    #####:  683:                            && ustr[i + 1] >= '0'
+    #####:  684:                            && ustr[i + 1] <= '9'
+        -:  685:                        ) {
+        -:  686:                            /* Print \ooo */
+    #####:  687:                            *s++ = '0' + (c >> 6);
+    #####:  688:                            *s++ = '0' + ((c >> 3) & 0x7);
+        -:  689:                        } else {
+        -:  690:                            /* Print \[[o]o]o */
+    #####:  691:                            if ((c >> 3) != 0) {
+    #####:  692:                                if ((c >> 6) != 0)
+    #####:  693:                                    *s++ = '0' + (c >> 6);
+    #####:  694:                                *s++ = '0' + ((c >> 3) & 0x7);
+        -:  695:                            }
+        -:  696:                        }
+    #####:  697:                        *s++ = '0' + (c & 0x7);
+        -:  698:                    }
+        -:  699:            }
+        -:  700:        }
+        -:  701:    }
+        -:  702:
+    #####:  703:    if (!(style & QUOTE_OMIT_LEADING_TRAILING_QUOTES))
+    #####:  704:        *s++ = '\"';
+    #####:  705:    *s = '\0';
+        -:  706:
+        -:  707:    /* Return zero if we printed entire ASCIZ string (didn't truncate it) */
+    #####:  708:    if (style & QUOTE_0_TERMINATED && ustr[i] == '\0') {
+        -:  709:        /* We didn't see NUL yet (otherwise we'd jump to 'asciz_ended')
+        -:  710:        * but next char is NUL.
+        -:  711:        */
+    #####:  712:        return 0;
+        -:  713:    }
+        -:  714:
+    #####:  715:    return 1;
+        -:  716:
+        -:  717:asciz_ended:
+    #####:  718:    if (!(style & QUOTE_OMIT_LEADING_TRAILING_QUOTES))
+    #####:  719:        *s++ = '\"';
+    #####:  720:    *s = '\0';
+        -:  721:    /* Return zero: we printed entire ASCIZ string (didn't truncate it) */
+    #####:  722:    return 0;
+        -:  723:}
+        -:  724:
+        -:  725:#ifndef ALLOCA_CUTOFF
+        -:  726:# define ALLOCA_CUTOFF	4032
+        -:  727:#endif
+        -:  728:#define use_alloca(n) ((n) <= ALLOCA_CUTOFF)
+        -:  729:
+        -:  730:/*
+        -:  731:* Quote string `str' of length `size' and print the result.
+        -:  732:*
+        -:  733:* If QUOTE_0_TERMINATED `style' flag is set,
+        -:  734:* treat `str' as a NUL-terminated string and
+        -:  735:* quote at most (`size' - 1) bytes.
+        -:  736:*
+        -:  737:* If QUOTE_OMIT_LEADING_TRAILING_QUOTES `style' flag is set,
+        -:  738:* do not add leading and trailing quoting symbols.
+        -:  739:*
+        -:  740:* Returns 0 if QUOTE_0_TERMINATED is set and NUL was seen, 1 otherwise.
+        -:  741:* Note that if QUOTE_0_TERMINATED is not set, always returns 1.
+        -:  742:*/
+        -:  743:char *
+    #####:  744:print_quoted_string(const char *str, unsigned int size, const unsigned int style, const char * return_type)
+        -:  745:{
+        -:  746:    char *buf;
+        -:  747:    char *outstr;
+        -:  748:    unsigned int alloc_size;
+        -:  749:    int rc;
+        -:  750:
+    #####:  751:    if (size && style & QUOTE_0_TERMINATED)
+    #####:  752:        --size;
+        -:  753:
+    #####:  754:    alloc_size = 4 * size;
+    #####:  755:    if (alloc_size / 4 != size) {
+    #####:  756:        error_msg("Out of memory");
+    #####:  757:        printf("???");
+    #####:  758:        return "-1";
+        -:  759:    }
+    #####:  760:    alloc_size += 1 + (style & QUOTE_OMIT_LEADING_TRAILING_QUOTES ? 0 : 2);
+        -:  761:
+    #####:  762:    if (use_alloca(alloc_size)) {
+    #####:  763:        outstr = alloca(alloc_size);
+    #####:  764:        buf = NULL;
+        -:  765:    } else {
+    #####:  766:        outstr = buf = malloc(alloc_size);
+    #####:  767:        if (!buf) {
+    #####:  768:            error_msg("Out of memory");
+    #####:  769:            printf("???");
+    #####:  770:            return "-1";
+        -:  771:        }
+        -:  772:    }
+        -:  773:
+        -:  774://         rc = string_quote(str, outstr, size, style);
+    #####:  775:    string_quote(str, outstr, size, style);
+    #####:  776:    if ( return_type == "return") {
+    #####:  777:        return outstr;
+    #####:  778:    } else if ( return_type == "print") {
+    #####:  779:        printf(outstr);
+        -:  780:    }
+        -:  781:
+    #####:  782:    free(buf);
+        -:  783://         return rc;
+    #####:  784:}
+        -:  785:
+        -:  786:void *
+    #####:  787:load_elf(char *mapped, int anywhere, Elf64_Ehdr **elf_ehdr, Elf64_Ehdr **ldso_ehdr, void * mapped_b)
+        -:  788:{
+        -:  789:	Elf64_Ehdr *hdr;
+    #####:  790:	Elf64_Phdr *pdr, *interp = NULL;
+        -:  791:	int i;
+    #####:  792:	void *text_segment = NULL;
+    #####:  793:	void *entry_point = NULL;
+    #####:  794:	unsigned long initial_vaddr = 0;
+    #####:  795:	unsigned long brk_addr = 0;
+        -:  796:	char buf[128];
+    #####:  797:	unsigned int mapflags = MAP_PRIVATE|MAP_ANONYMOUS;
+        -:  798:
+    #####:  799:	if (!anywhere)
+    #####:  800:		mapflags |= MAP_FIXED;
+        -:  801:
+        -:  802:	/* Just addresses in mapped-in file. */
+    #####:  803:	hdr = (Elf64_Ehdr *)mapped;
+    #####:  804:	pdr = (Elf64_Phdr *)(mapped + hdr->e_phoff);
+        -:  805:
+    #####:  806:	entry_point = (void *)hdr->e_entry;
+        -:  807:
+    #####:  808:	for (i = 0; i < hdr->e_phnum; ++i, ++pdr)
+        -:  809:	{
+    #####:  810:		unsigned int protflags = 0;
+    #####:  811:		unsigned long map_addr = 0, rounded_len, k;
+    #####:  812:		unsigned long unaligned_map_addr = 0;
+        -:  813:		void *segment;
+        -:  814:
+    #####:  815:		if (pdr->p_type == 0x03)  /* PT_INTERP */
+        -:  816:		{
+    #####:  817:			interp = pdr;
+    #####:  818:			continue;
+        -:  819:		}
+        -:  820:
+    #####:  821:		if (pdr->p_type != PT_LOAD)  /* Segment not "loadable" */
+    #####:  822:			continue;
+        -:  823:
+    #####:  824:		if (text_segment != 0 && anywhere)
+        -:  825:		{
+        -:  826:			unaligned_map_addr
+    #####:  827:				= (unsigned long)text_segment
+    #####:  828:				+ ((unsigned long)pdr->p_vaddr - (unsigned long)initial_vaddr)
+        -:  829:			;
+    #####:  830:			map_addr = ALIGNDOWN((unsigned long)unaligned_map_addr, 0x1000);
+    #####:  831:			mapflags |= MAP_FIXED;
+    #####:  832:		} else if (!anywhere) {
+    #####:  833:			map_addr = ALIGNDOWN(pdr->p_vaddr, 0x1000);
+        -:  834:		} else {
+    #####:  835:			map_addr = 0UL;
+        -:  836:		}
+        -:  837:
+    #####:  838:		if (!anywhere && initial_vaddr == 0)
+    #####:  839:			initial_vaddr = pdr->p_vaddr;
+        -:  840:
+        -:  841:		/* mmap() freaks out if you give it a non-multiple of pagesize */
+    #####:  842:		rounded_len = (unsigned long)pdr->p_memsz + ((unsigned long)pdr->p_vaddr % 0x1000);
+    #####:  843:		rounded_len = ROUNDUP(rounded_len, 0x1000);
+        -:  844:
+    #####:  845:		segment = mmap(
+        -:  846:			(void *)map_addr,
+        -:  847:			rounded_len,
+        -:  848:			PROT_WRITE, mapflags, -1, 0
+        -:  849:		);
+        -:  850:
+    #####:  851:		if (segment == (void *) -1)
+        -:  852:		{
+    #####:  853:			printf("Failed to mmap()");
+    #####:  854:			exit(3);
+        -:  855:		}
+        -:  856:
+    #####:  857:		printf("anywhere = %d\n", anywhere);
+    #####:  858:		memcopy(
+    #####:  859:			!anywhere? (void *)pdr->p_vaddr:
+    #####:  860:			(void *)((unsigned long)segment + ((unsigned long)pdr->p_vaddr % 0x1000)),
+    #####:  861:			mapped + pdr->p_offset,
+        -:  862:			pdr->p_filesz
+        -:  863:		);
+        -:  864:
+    #####:  865:		if (!text_segment)
+        -:  866:		{
+    #####:  867:			*elf_ehdr = segment;
+    #####:  868:			text_segment = segment;
+    #####:  869:			initial_vaddr = pdr->p_vaddr;
+    #####:  870:			if (anywhere)
+    #####:  871:				entry_point = (void *)((unsigned long)entry_point
+    #####:  872:					- (unsigned long)pdr->p_vaddr
+    #####:  873:					+ (unsigned long)text_segment);
+        -:  874:		}
+        -:  875:
+        -:  876:
+    #####:  877:		if (pdr->p_flags & PF_R)
+    #####:  878:			protflags |= PROT_READ;
+    #####:  879:		if (pdr->p_flags & PF_W)
+    #####:  880:			protflags |= PROT_WRITE;
+    #####:  881:		if (pdr->p_flags & PF_X)
+    #####:  882:			protflags |= PROT_EXEC;
+        -:  883:
+    #####:  884:		mprotect(segment, rounded_len, protflags);
+        -:  885:
+    #####:  886:		k = pdr->p_vaddr + pdr->p_memsz;
+    #####:  887:		if (k > brk_addr) brk_addr = k;
+        -:  888:	}
+        -:  889:
+    #####:  890:	if (interp)
+        -:  891:	{
+    #####:  892:        Elf64_Ehdr *junk_ehdr = NULL;
+    #####:  893:        printf("LOAD_ELF mapping %p\n", mapped_b);
+    #####:  894:		entry_point = load_elf(mapped_b, 1, ldso_ehdr, &junk_ehdr, NULL);
+        -:  895:	}
+        -:  896:
+    #####:  897:	if (!anywhere)
+    #####:  898:		brk_(ROUNDUP(brk_addr, 0x1000));
+        -:  899:
+    #####:  900:	return (void *)entry_point;
+        -:  901:}
+        -:  902:
+    #####:  903:char *strjoinb(const char *_a, const char *_b) {
+    #####:  904:    size_t na = strlen(_a);
+    #####:  905:    size_t nb = strlen(_b);
+    #####:  906:    char *p = malloc(na + nb + 1);
+    #####:  907:    memcpy(p, _a, na);
+    #####:  908:    memcpy(p + na, _b, nb);
+    #####:  909:    p[na + nb] = 0;
+    #####:  910:    return p;
+        -:  911:}
+        -:  912:
+    #####:  913:int shift_split(char * argv[], char * program[], char * args[], int * ac) { // shift function modified for this purpose
+    #####:  914:    char ** args_tmp = malloc(1 * sizeof(*args_tmp));
+    #####:  915:    for(int i=0; i<99; i++) {
+    #####:  916:        if (argv[i] == NULL) {
+    #####:  917:            printf("end of argument list\n");
+    #####:  918:            break;
+        -:  919:        }
+    #####:  920:        if (i == 0) {
+    #####:  921:        } else if (i == 1) {
+    #####:  922:            printf("program[%d] = %s\n", *ac, argv[i]);
+    #####:  923:            program[0] = argv[i];
+    #####:  924:            *ac = *ac+1;
+        -:  925:        } else {
+    #####:  926:            printf("args[%d] = %s\n", *ac-1, argv[i]);
+    #####:  927:            args[i-2] = argv[i];
+    #####:  928:            *ac = *ac+1;
+        -:  929:        }
+        -:  930:    }
+    #####:  931:    return 0;
+        -:  932:}
+        -:  933:
+    #####:  934:int split (char *str, char c, char ***arr)
+        -:  935:{
+    #####:  936:    int count = 1;
+    #####:  937:    int token_len = 1;
+    #####:  938:    int i = 0;
+        -:  939:    char *p;
+        -:  940:    char *t;
+        -:  941:
+    #####:  942:    p = str;
+    #####:  943:    while (*p != '\0')
+        -:  944:    {
+    #####:  945:        if (*p == c)
+    #####:  946:            count++;
+    #####:  947:        p++;
+        -:  948:    }
+        -:  949:
+    #####:  950:    *arr = (char**) malloc(sizeof(char*) * count);
+    #####:  951:    if (*arr == NULL)
+    #####:  952:        exit(1);
+        -:  953:
+    #####:  954:    p = str;
+    #####:  955:    while (*p != '\0')
+        -:  956:    {
+    #####:  957:        if (*p == c)
+        -:  958:        {
+    #####:  959:            (*arr)[i] = (char*) malloc( sizeof(char) * token_len );
+    #####:  960:            if ((*arr)[i] == NULL)
+    #####:  961:                exit(1);
+        -:  962:
+    #####:  963:            token_len = 0;
+    #####:  964:            i++;
+        -:  965:        }
+    #####:  966:        p++;
+    #####:  967:        token_len++;
+        -:  968:    }
+    #####:  969:    (*arr)[i] = (char*) malloc( sizeof(char) * token_len );
+    #####:  970:    if ((*arr)[i] == NULL)
+    #####:  971:        exit(1);
+        -:  972:
+    #####:  973:    i = 0;
+    #####:  974:    p = str;
+    #####:  975:    t = ((*arr)[i]);
+    #####:  976:    while (*p != '\0')
+        -:  977:    {
+    #####:  978:        if (*p != c && *p != '\0')
+        -:  979:        {
+    #####:  980:            *t = *p;
+    #####:  981:            t++;
+        -:  982:        }
+        -:  983:        else
+        -:  984:        {
+    #####:  985:            *t = '\0';
+    #####:  986:            i++;
+    #####:  987:            t = ((*arr)[i]);
+        -:  988:        }
+    #####:  989:        p++;
+        -:  990:    }
+        -:  991:
+    #####:  992:    return count;
+        -:  993:}
+        -:  994:
+        -:  995:// not used but kept incase needed, a version of lseek_string that has an offset multiplier as so this does not need to be specified multiple times, eg if offset is 64 and multiplier is 2 the offset is then 128, this is intended for loops and related
+    #####:  996:void lseek_stringb(char **src, int len, int offset, int offsetT) {
+    #####:  997:    char *p = malloc(len);
+        -:  998:    int off;
+    #####:  999:    off=((len*offsetT));
+    #####: 1000:    memcpy(p, *src+offset+off, len);
+    #####: 1001:    *src = p;
+    #####: 1002:}
+        -: 1003:
+    #####: 1004:char *strjoin(const char *_a, const char *_b, int _a_len, int len) {
+    #####: 1005:    size_t na = _a_len;
+    #####: 1006:    size_t nb = len;
+    #####: 1007:    char *p = malloc(na + nb + 1);
+    #####: 1008:    memcpy(p, _a, na);
+    #####: 1009:    memcpy(p + na, _b, nb);
+    #####: 1010:    p[na + nb] = 0;
+    #####: 1011:    return p;
+        -: 1012:}
+        -: 1013:
+    #####: 1014:int stream__(char *file, char **p, int *q, int LINES_TO_READ) {
+    #####: 1015:            const char *filename = file;
+    #####: 1016:            int fd = open(filename, O_RDONLY);
+    #####: 1017:            if (fd < 0) {
+    #####: 1018:                printf("cannot open \"%s\", returned %i\n", filename, fd);
+    #####: 1019:                return -1;
+        -: 1020:            }
+        -: 1021:            char * array;
+        -: 1022:            char ch;
+    #####: 1023:            size_t lines = 1;
+        -: 1024:            // Read the file byte by byte
+    #####: 1025:            int bytes=1;
+    #####: 1026:            int count=1;
+    #####: 1027:            array = malloc(sizeof(char) * 2048);
+        -: 1028:            char *array_tmp;
+    #####: 1029:            while (read(fd, &ch, 1) == 1) {
+    #####: 1030:            printf("\rbytes read: %'i", bytes);
+    #####: 1031:                if (count == 1024) { array_tmp = realloc(array, bytes+1024);
+    #####: 1032:                    if (array_tmp == NULL) {
+    #####: 1033:                        printf("failed to allocate array to new size");
+    #####: 1034:                        free(array);
+    #####: 1035:                        exit(1);
+        -: 1036:                    } else {
+    #####: 1037:                        array = array_tmp;
+        -: 1038:                    }
+    #####: 1039:                    count=1;
+        -: 1040:                }
+    #####: 1041:                array[bytes-1] = ch;
+    #####: 1042:                if (ch == '\n') {
+    #####: 1043:                    if (lines == LINES_TO_READ) {
+    #####: 1044:                        break;
+        -: 1045:                    }
+    #####: 1046:                    lines++;
+        -: 1047:                }
+    #####: 1048:                count++;
+    #####: 1049:                bytes++;
+        -: 1050:            }
+    #####: 1051:            bytes--;
+    #####: 1052:            array_tmp = realloc(array, bytes);
+    #####: 1053:            if (array_tmp == NULL) {
+    #####: 1054:                printf("failed to allocate array to new size");
+    #####: 1055:                free(array);
+    #####: 1056:                exit(1);
+        -: 1057:            } else {
+    #####: 1058:                array = array_tmp;
+        -: 1059:            }
+    #####: 1060:            printf("\rbytes read: %'i\n", bytes);
+    #####: 1061:    *p = array;
+    #####: 1062:    *q = bytes;
+    #####: 1063:    return bytes;
+        -: 1064:}
+        -: 1065:
+        -: 1066:// not used but kept incase needed, a version of stream__ that only outputs the last line read
+    #####: 1067:int stream__o(char *file, char **p, int *q, int LINES_TO_READ) {
+    #####: 1068:            const char *filename = file;
+    #####: 1069:            int fd = open(filename, O_RDONLY);
+    #####: 1070:            if (fd < 0) {
+    #####: 1071:                printf("cannot open \"%s\", returned %i\n", filename, fd);
+    #####: 1072:                return -1;
+        -: 1073:            }
+        -: 1074:            char * array;
+        -: 1075:            char * array_tmp;
+        -: 1076:            char * array_lines;
+        -: 1077:            char * array_lines_tmp;
+        -: 1078:            char ch;
+    #####: 1079:            size_t lines = 1;
+        -: 1080:            // Read the file byte by byte
+    #####: 1081:            int bytes=1;
+    #####: 1082:            int count=1;
+    #####: 1083:            array = malloc(sizeof(char) * 2048);
+    #####: 1084:            while (read(fd, &ch, 1) == 1) {
+    #####: 1085:            printf("\rbytes read: %'i", bytes);
+    #####: 1086:                if (count == 1024) { array_tmp = realloc(array, bytes+1024);
+    #####: 1087:                    if (array_tmp == NULL) {
+    #####: 1088:                        printf("failed to allocate array to new size");
+    #####: 1089:                        free(array);
+    #####: 1090:                        exit(1);
+        -: 1091:                    } else {
+    #####: 1092:                        array = array_tmp;
+        -: 1093:                    }
+    #####: 1094:                    count=1;
+        -: 1095:                }
+    #####: 1096:                array[bytes-1] = ch;
+    #####: 1097:                if (ch == '\n') {
+    #####: 1098:                    printf("attempting to reset array\n");
+    #####: 1099:                    if (lines == LINES_TO_READ) {
+    #####: 1100:                        break;
+        -: 1101:                    } else {
+        -: 1102:                        // reset array to as if we just executed this function
+        -: 1103:                        int y;
+    #####: 1104:                        for (y=0; y<bytes; y++) {
+    #####: 1105:                            array[y] = 0;
+        -: 1106:                        }
+    #####: 1107:                        free(array);
+    #####: 1108:                        array = malloc(sizeof(char) * 2048);
+    #####: 1109:                        bytes=1;
+    #####: 1110:                        count=1;
+        -: 1111:                    }
+    #####: 1112:                    lines++;
+        -: 1113:                }
+        -: 1114://                 count++;
+    #####: 1115:                bytes++;
+        -: 1116:            }
+    #####: 1117:            bytes--;
+    #####: 1118:            array_tmp = realloc(array, bytes);
+    #####: 1119:            if (array_tmp == NULL) {
+    #####: 1120:                printf("failed to allocate array to new size");
+    #####: 1121:                free(array);
+    #####: 1122:                exit(1);
+        -: 1123:            } else {
+    #####: 1124:                array = array_tmp;
+        -: 1125:            }
+    #####: 1126:            printf("\rbytes read: %'i\n", bytes);
+    #####: 1127:    *p = array;
+    #####: 1128:    *q = bytes;
+    #####: 1129:    return bytes;
+        -: 1130:}
+        -: 1131:
+        -: 1132:// reads a entire file
+    #####: 1133:int read__(char *file, char **p, size_t *q) {
+        -: 1134:    int fd;
+    #####: 1135:    size_t len = 0;
+        -: 1136:    char *o;
+    #####: 1137:    if (!(fd = open(file, O_RDONLY)))
+        -: 1138:    {
+    #####: 1139:        fprintf(stderr, "open() failure\n");
+    #####: 1140:        return (1);
+        -: 1141:    }
+    #####: 1142:    len = lseek(fd, 0, SEEK_END);
+    #####: 1143:    lseek(fd, 0, 0);
+    #####: 1144:    if (!(o = malloc(len))) {
+    #####: 1145:        fprintf(stderr, "failure to malloc()\n");
+        -: 1146:    }
+    #####: 1147:    if ((read(fd, o, len)) == -1) {
+    #####: 1148:        fprintf(stderr, "failure to read()\n");
+        -: 1149:    }
+    #####: 1150:    int cl = close(fd);
+    #####: 1151:    if (cl < 0) {
+    #####: 1152:        printf("cannot close \"%s\", returned %i\n", file, cl);
+    #####: 1153:        return -1;
+        -: 1154:    }
+    #####: 1155:    *p = o;
+    #####: 1156:    *q = len;
+    #####: 1157:    return len;
+        -: 1158:}
+        -: 1159:
+        -: 1160:void *
+    #####: 1161:stack_setupb(
+        -: 1162:	struct saved_block *args,
+        -: 1163:	struct saved_block *envp,
+        -: 1164:    struct saved_block *auxvp,
+        -: 1165:	Elf64_Ehdr *ehdr,
+        -: 1166:	Elf64_Ehdr *ldso
+        -: 1167:)
+        -: 1168:{
+    #####: 1169:	Elf64_auxv_t	*aux, *excfn = NULL;
+        -: 1170:	char **av, **ev;
+        -: 1171:	char	*addr, *str, *rsp;
+        -: 1172:	unsigned long *ptr;
+        -: 1173:	int	  i, j;
+        -: 1174:	char newstack[16384];
+        -: 1175:
+        -: 1176:	/* Align new stack. */
+    #####: 1177:	rsp = (char *)ALIGN(((unsigned long)&newstack[150]), 16);
+        -: 1178:
+        -: 1179:	/* 
+        -: 1180:	 * After returning from
+        -: 1181:	 * stack_setup(), don't do anything that uses the call stack: that
+        -: 1182:	 * will roach this newly-constructed stack.
+        -: 1183:	 */
+        -: 1184:
+    #####: 1185:	ptr = (unsigned long *)rsp;
+        -: 1186:
+    #####: 1187:	*ptr++ = args->cnt; /* set argc */
+    #####: 1188:	av = (char **)ptr;
+    #####: 1189:	ptr += args->cnt;  /* skip over argv[] */
+    #####: 1190:	*ptr++ = 0;
+        -: 1191:
+    #####: 1192:	ev = (char **)ptr;
+    #####: 1193:	ptr += envp->cnt;  /* skip over envp[] */
+    #####: 1194:	*ptr++ = 0;
+        -: 1195:
+    #####: 1196:	aux = (Elf64_auxv_t *)ptr;
+        -: 1197:
+    #####: 1198:	ptr = (unsigned long *)ROUNDUP((unsigned long)ptr + auxvp->size, sizeof(unsigned long));
+        -: 1199:	
+        -: 1200:	/* copy ELF auxilliary vector table */
+    #####: 1201:	addr =  (char *)aux;
+    #####: 1202:	for (j = 0; j < auxvp->size; ++j)
+    #####: 1203:		addr[j] = auxvp->block[j];
+        -: 1204:
+        -: 1205:	/* Fix up a few entries: kernel will have set up the AUXV
+        -: 1206:	 * for the user-land exec program, mapped in at a low address.
+        -: 1207:	 * need to fix up a few AUXV entries for the "real" program. */
+    #####: 1208:	for (i = 0; i < auxvp->cnt; ++i)
+        -: 1209:	{
+    #####: 1210:		switch (aux[i].a_type)
+        -: 1211:		{
+    #####: 1212:		case AT_PHDR:  aux[i].a_un.a_val = (unsigned long)((char *)ehdr + ehdr->e_phoff); break;
+    #####: 1213:		case AT_PHNUM: aux[i].a_un.a_val = ehdr->e_phnum; break;
+    #####: 1214:		case AT_BASE:  aux[i].a_un.a_val = (unsigned long)ldso; break;
+    #####: 1215:		case AT_ENTRY: aux[i].a_un.a_val = (unsigned long)ehdr->e_entry; break;
+        -: 1216:#ifdef AT_EXECFN
+    #####: 1217:		case AT_EXECFN: excfn = &(aux[i]); break;
+        -: 1218:#endif
+        -: 1219:		}
+        -: 1220:	}
+        -: 1221:
+    #####: 1222:	*ptr++ = 0;
+        -: 1223:
+        -: 1224:	/* Copy argv strings onto stack */
+    #####: 1225:	addr =  (char *)ptr;
+    #####: 1226:	str = args->block;
+        -: 1227:
+    #####: 1228:	for (i = 0; i < args->cnt; ++i)
+        -: 1229:	{
+    #####: 1230:		av[i] = addr;
+    #####: 1231:		for (j = 0; *str; ++j)
+    #####: 1232:			*addr++ = *str++;
+    #####: 1233:		*addr++ = *str++;  /* ASCII Nul */
+        -: 1234:	}
+        -: 1235:
+    #####: 1236:	ptr = (unsigned long *)ROUNDUP((unsigned long)addr, sizeof(unsigned long));
+    #####: 1237:	*ptr = 0;
+        -: 1238:
+        -: 1239:	/* Copy envp strings onto stack */
+    #####: 1240:	addr =  (char *)ptr;
+    #####: 1241:	str = envp->block;
+        -: 1242:
+    #####: 1243:	for (i = 0; i < envp->cnt; ++i)
+        -: 1244:	{
+    #####: 1245:		ev[i] = addr;
+    #####: 1246:		for (j = 0; *str; ++j)
+    #####: 1247:			*addr++ = *str++;
+    #####: 1248:		*addr++ = *str++;  /* ASCII Nul */
+        -: 1249:	}
+        -: 1250:
+    #####: 1251:	ptr = (unsigned long *)ROUNDUP((unsigned long)addr, sizeof(unsigned long));
+    #####: 1252:	*ptr = 0;
+        -: 1253:
+        -: 1254:	/* Executable name at top of stack */
+    #####: 1255:	if (excfn)
+        -: 1256:	{
+    #####: 1257:		addr =  (char *)ptr;
+    #####: 1258:		str = args->block;
+    #####: 1259:		excfn->a_un.a_val = (unsigned long)addr;
+    #####: 1260:		for (j = 0; *str; ++j)
+    #####: 1261:			*addr++ = *str++;
+    #####: 1262:		*addr++ = *str++;  /* ASCII Nul */
+        -: 1263:
+    #####: 1264:		ptr = (unsigned long *)ROUNDUP((unsigned long)addr, sizeof(unsigned long));
+        -: 1265:	}
+        -: 1266:
+    #####: 1267:	release_args(args);
+    #####: 1268:	release_args(envp);
+    #####: 1269:	release_args(auxvp);
+        -: 1270:
+    #####: 1271:	return ((void *)rsp);
+        -: 1272:}
+        -: 1273:
+        -: 1274:#include <sys/auxv.h>
+        -: 1275:
+    #####: 1276:void die(const char *s)
+        -: 1277:{
+    #####: 1278:	perror(s);
+    #####: 1279:	exit(errno);
+        -: 1280:}
+    #####: 1281:void set_auxv(char * value)
+        -: 1282:{
+        -: 1283:	char buf[1024];
+    #####: 1284:	int fd = -1;
+    #####: 1285:	ssize_t r = 0;
+    #####: 1286:	Elf64_auxv_t *auxv = NULL;
+        -: 1287:
+    #####: 1288:	snprintf(buf, sizeof(buf), "/proc/self/auxv");
+        -: 1289:
+    #####: 1290:	if ((fd = open(buf, O_RDONLY)) < 0)
+    #####: 1291:		die("[-] open");
+        -: 1292:
+    #####: 1293:	if ((r = read(fd, buf, sizeof(buf))) < 0)
+    #####: 1294:		die("[-] read");
+    #####: 1295:	close(fd);
+        -: 1296:
+    #####: 1297:	for (auxv = (Elf64_auxv_t *)buf; auxv->a_type != AT_NULL && (char *)auxv < buf + r; ++auxv) {
+    #####: 1298:		switch (auxv->a_type) {
+        -: 1299:		case AT_EXECFN:
+    #####: 1300:			printf("old AT_EXECFN:\t%s\n", (void *)auxv->a_un.a_val);
+    #####: 1301:            auxv->a_un.a_val = value;
+    #####: 1302:			printf("new AT_EXECFN:\t%s\n", (void *)auxv->a_un.a_val);
+    #####: 1303:			break;
+        -: 1304:		default:
+    #####: 1305:            break;
+        -: 1306:		}
+        -: 1307:	}
+    #####: 1308:}
+        -: 1309:
+    #####: 1310:char * get_full_path() {
+    #####: 1311:    findyourself_init((char *)getauxval(AT_EXECFN));
+    #####: 1312:    char * auxAT = (char *)getauxval(AT_EXECFN);
+        -: 1313:    char newpath[PATH_MAX];
+    #####: 1314:    find_yourself(newpath, sizeof(newpath));
+        -: 1315:    if(1 || strcmp((char *)getauxval(AT_EXECFN),newpath)) { }
+    #####: 1316:    char *fullpath  = strdup( newpath );
+    #####: 1317:    char *directorypath = dirname( strdup( newpath ) );
+    #####: 1318:    printf("current = %s\nfullpath = %s\ndirname = %s\n", auxAT, fullpath, directorypath);
+    #####: 1319:    return fullpath;
+        -: 1320:}
+        -: 1321:#define _dl_printf printf
+        -: 1322:#define strchrb strchr
+        -: 1323:#define strcpyb strcpy
+        -: 1324:#define strncpyb strncpy
+        -: 1325:#define strncatb strncat
+        -: 1326:#define strstrb strstr
+        -: 1327:int *
+        2: 1328:resolve(char * path)
+        -: 1329:  {
+        2: 1330:   _dl_printf("called resolve()\n");
+        2: 1331:      if(!access(path, F_OK)) {
+        -: 1332:        } else {
+    #####: 1333:        return -1;
+        -: 1334:        }
+        2: 1335:    char * pathb = (char *)malloc(strlen(path) + 1);
+        -: 1336:    char * strcpyb(char *dest, const char *src);
+        2: 1337:    strcpyb(pathb,path);
+        -: 1338:    char save_pwd[PATH_MAX];
+        2: 1339:    getcwd(save_pwd, sizeof(save_pwd));
+        2: 1340:    char path_separator='/';
+        2: 1341:    char relpathdot_separator[4]="/./";
+        2: 1342:    char relpathdotdor_separator[5]="/../";
+        -: 1343:    char newpathb[PATH_MAX+256];
+        -: 1344:    char newpathc[PATH_MAX+256];
+        -: 1345:    char linkb[PATH_MAX+256];
+        -: 1346:    char linkd[PATH_MAX+256];
+        -: 1347:    char tmp_pwd[PATH_MAX];
+        -: 1348:    char current_pwd[PATH_MAX];
+        2: 1349:    getcwd(current_pwd, sizeof(current_pwd));
+        -: 1350:        #include <sys/types.h>
+        -: 1351:        #include <sys/stat.h>
+    #####: 1352:    char* resolvedir(const char * pathb)
+        -: 1353:    {
+    #####: 1354:        _dl_printf("chdir(%s)\n", pathb);
+    #####: 1355:        chdir(pathb);
+    #####: 1356:        _dl_printf("getcwd(%s, sizeof(%s))\n", tmp_pwd, tmp_pwd);
+    #####: 1357:        getcwd(tmp_pwd, sizeof(tmp_pwd));
+    #####: 1358:        _dl_printf("%s points to %s\n\n", pathb, tmp_pwd);
+    #####: 1359:        _dl_printf("chdir(%s)\n", current_pwd);
+    #####: 1360:        chdir(current_pwd);
+    #####: 1361:        _dl_printf("return %s\n", tmp_pwd);
+    #####: 1362:        return tmp_pwd;
+        -: 1363:    }
+        2: 1364:    char* resolvefile(char * pathb)
+        -: 1365:    {
+        2: 1366:        _dl_printf("strncpyb(%s, %s, sizeof(%s)\n", linkb, pathb, linkb);
+        2: 1367:        strncpyb(linkb, pathb, sizeof(linkb));
+        2: 1368:        _dl_printf("linkb[sizeof(%s)-1]=0\n", linkb);
+        2: 1369:        linkb[sizeof(linkb)-1]=0;
+        2: 1370:        _dl_printf("strncpyb(%s, %s, sizeof(%s)\n", linkd, pathb, linkb);
+        2: 1371:        strncpyb(linkd, pathb, sizeof(linkb));
+        2: 1372:        _dl_printf("linkb[sizeof(%s)-1]=0\n", linkb);
+        2: 1373:        linkb[sizeof(linkb)-1]=0;
+        2: 1374:        _dl_printf("dirname(%s)\n", linkd);
+        2: 1375:        dirname(linkd);
+        2: 1376:        _dl_printf("strncatb(%s, \"/\", sizeof(%s));\n", linkd, linkd);
+        2: 1377:        strncatb(linkd, "/", sizeof(linkd));
+        2: 1378:        _dl_printf("linkd[sizeof(%s)-1]=0\n", linkd);
+        2: 1379:        linkd[sizeof(linkd)-1]=0;
+        2: 1380:        _dl_printf("chdir(%s)\n", linkd);
+        2: 1381:        chdir(linkd);
+        2: 1382:        _dl_printf("getcwd(%s, sizeof(%s))\n", tmp_pwd, tmp_pwd);
+        2: 1383:        getcwd(tmp_pwd, sizeof(tmp_pwd));
+        2: 1384:        _dl_printf("strncatb(%s, \"/\", sizeof(%s));\n", tmp_pwd, tmp_pwd);
+        2: 1385:        strncatb(tmp_pwd, "/", sizeof(tmp_pwd));
+        2: 1386:        _dl_printf("tmp_pwd[sizeof(%s)-1]=0\n", tmp_pwd);
+        2: 1387:        tmp_pwd[sizeof(tmp_pwd)-1]=0;
+        2: 1388:        _dl_printf("strncpyb(%s, %s, sizeof(%s));\n", linkb, basename(pathb), linkb);
+        2: 1389:        strncpyb(linkb, basename(pathb), sizeof(linkb));
+        2: 1390:        _dl_printf("linkb[sizeof(%s)-1]=0\n", linkb);
+        2: 1391:        linkb[sizeof(linkb)-1]=0;
+        2: 1392:        _dl_printf("strncatb(%s, %s, sizeof(%s));\n", tmp_pwd, linkb, tmp_pwd);
+        2: 1393:        strncatb(tmp_pwd, linkb, sizeof(tmp_pwd));
+        2: 1394:        _dl_printf("tmp_pwd[sizeof(%s)-1]=0\n", tmp_pwd);
+        2: 1395:        tmp_pwd[sizeof(tmp_pwd)-1]=0;
+        2: 1396:        _dl_printf("%s points to %s\n\n", pathb, tmp_pwd);
+        2: 1397:        _dl_printf("chdir(%s)\n", current_pwd);
+        2: 1398:        chdir(current_pwd);
+        2: 1399:        _dl_printf("return %s\n", tmp_pwd);
+        2: 1400:        return tmp_pwd;
+        -: 1401:    }
+        -: 1402:    #include <sys/types.h>
+        -: 1403:    #include <sys/stat.h>
+        2: 1404:    char * getlink(const char * link)
+        -: 1405:    {
+        -: 1406:        struct stat p_statbuf;
+        2: 1407:        if (lstat(link,&p_statbuf)==0) {
+        2: 1408:            _dl_printf("%s type is <int>\n",link, S_ISLNK(p_statbuf.st_mode));
+        2: 1409:            if (S_ISLNK(p_statbuf.st_mode)==1)
+        -: 1410:            {
+    #####: 1411:            _dl_printf("%s is symbolic link \n", link);
+        -: 1412:            } else
+        -: 1413:            {
+        2: 1414:            _dl_printf("%s is not symbolic link \n", link);
+        2: 1415:                return 0;
+        -: 1416:            }
+        -: 1417:        }
+        -: 1418:        struct stat sb;
+        -: 1419:        char *linkname;
+        -: 1420:        ssize_t r;
+        -: 1421:
+    #####: 1422:        if (lstat(link, &sb) == -1)
+        -: 1423:        {
+    #####: 1424:                _exit(EXIT_FAILURE);
+        -: 1425:        }
+        -: 1426:
+    #####: 1427:        linkname = malloc(sb.st_size + 1);
+    #####: 1428:            if (linkname == NULL)
+        -: 1429:            {
+    #####: 1430:                _exit(EXIT_FAILURE);
+        -: 1431:            }
+        -: 1432:
+    #####: 1433:        r = readlink(link, linkname, sb.st_size + 1);
+        -: 1434:
+    #####: 1435:        if (r < 0)
+        -: 1436:        {
+    #####: 1437:                _exit(EXIT_FAILURE);
+        -: 1438:        }
+        -: 1439:
+    #####: 1440:        if (r > sb.st_size)
+        -: 1441:        {
+    #####: 1442:                _exit(EXIT_FAILURE);
+        -: 1443:        }
+        -: 1444:
+    #####: 1445:        linkname[sb.st_size] = '\0';
+        -: 1446:
+    #####: 1447:       _dl_printf("\"%s\" points to '%s'\n", link, linkname);
+        -: 1448:
+    #####: 1449:        path = linkname;
+    #####: 1450:        char * checkifsymlink(const char * tlink)
+        -: 1451:        {
+        -: 1452:            struct stat p_statbuf;
+    #####: 1453:            if (lstat(tlink,&p_statbuf)==0)
+        -: 1454:            {
+    #####: 1455:                _dl_printf("%s type is <int>\n",tlink, S_ISLNK(p_statbuf.st_mode));
+    #####: 1456:                if (S_ISLNK(p_statbuf.st_mode)==1)
+        -: 1457:                {
+    #####: 1458:                _dl_printf("%s is symbolic link \n", tlink);
+    #####: 1459:                _dl_printf("called getlink()\n");
+    #####: 1460:                    getlink(tlink);
+        -: 1461:                } else
+        -: 1462:                {
+    #####: 1463:                _dl_printf("%s is not symbolic link \n", tlink);
+    #####: 1464:                    return 0;
+        -: 1465:                }
+        -: 1466:            }
+    #####: 1467:        return 0;
+        -: 1468:        }
+    #####: 1469:       _dl_printf("called checkifsymlink()\n");
+    #####: 1470:        checkifsymlink(path);
+    #####: 1471:        return 0;
+        -: 1472:    }
+        2: 1473:   _dl_printf("called getlink()\n");
+        2: 1474:    getlink(path);
+        2: 1475:    char * testtype(const char * patha)
+        -: 1476:    {
+        2: 1477:        int is_regular_file(const char *patha)
+        -: 1478:        {
+        -: 1479:            struct stat path_stat;
+        2: 1480:            stat(patha, &path_stat);
+        2: 1481:            return S_ISREG(path_stat.st_mode);
+        -: 1482:        }
+    #####: 1483:        int isDirectory(const char *patha)
+        -: 1484:        {
+        -: 1485:            struct stat statbuf;
+    #####: 1486:            if (stat(patha, &statbuf) != 0)
+    #####: 1487:                return 0;
+    #####: 1488:            return S_ISDIR(statbuf.st_mode);
+        -: 1489:        }
+        2: 1490:        if (is_regular_file(patha)==1)
+        -: 1491:        {
+        2: 1492:           _dl_printf("%s is file \n", patha);
+        2: 1493:            if (path[0]==path_separator)
+        -: 1494:            {
+    #####: 1495:                if ( strstrb(path, relpathdot_separator ))
+        -: 1496:                {
+    #####: 1497:                   _dl_printf("%s is an absolute path which contains a dot relative path\n", path);
+    #####: 1498:                   _dl_printf("called Rresolvefile()\n");
+    #####: 1499:                    return resolvefile(path);
+    #####: 1500:                } else if ( strstrb(path, relpathdotdor_separator ))
+        -: 1501:                {
+    #####: 1502:                   _dl_printf("%s is an absolute path which contains a dot dot relative path\n", path);
+    #####: 1503:                   _dl_printf("called resolvefile()\n");
+    #####: 1504:                   return resolvefile(path);
+        -: 1505:                } else
+        -: 1506:                {
+    #####: 1507:                   _dl_printf("%s is an absolute path with no relative paths\n", path);
+    #####: 1508:                    return path;
+        -: 1509:                }
+        2: 1510:            } else if ( strchrb(path, path_separator ))
+        -: 1511:            {
+        2: 1512:               _dl_printf("%s is a relative path\n", path);
+        2: 1513:                strncpyb(newpathb, current_pwd, sizeof(newpathb));
+        2: 1514:                newpathb[sizeof(newpathb)-1]=0;
+        2: 1515:                strncatb(newpathb, "/", sizeof(newpathb));
+        2: 1516:                newpathb[sizeof(newpathb)-1]=0;
+        2: 1517:                strncatb(newpathb, path, sizeof(newpathb));
+        2: 1518:                newpathb[sizeof(newpathb)-1]=0;
+        2: 1519:               _dl_printf("called resolvefile()\n");
+        2: 1520:                printf("need to re execute\n");
+        2: 1521:                char * new_aux = resolvefile(newpathb);
+        2: 1522:                printf("executing with %s\n\n\n\n", new_aux);
+        2: 1523:                int ret = execv(new_aux, NULL);
+        2: 1524:                printf("ret = %d\n\n", ret);
+    #####: 1525:                return "ERROR";
+        -: 1526:            } else
+        -: 1527:            {
+    #####: 1528:               _dl_printf("could not determine path type of %s\n", path);
+    #####: 1529:                return "NULL";
+        -: 1530:            }
+    #####: 1531:        } else if (isDirectory(patha)==1)
+        -: 1532:        {
+    #####: 1533:           _dl_printf("%s is a directory \n", patha);
+    #####: 1534:            if (path[0]==path_separator)
+        -: 1535:            {
+    #####: 1536:                if ( strstrb(path, relpathdot_separator ))
+        -: 1537:                {
+    #####: 1538:                   _dl_printf("%s is an absolute path which contains a dot relative path\n", path);
+    #####: 1539:                   _dl_printf("called resolvedir()\n");
+    #####: 1540:                    resolvedir(path);
+    #####: 1541:                } else if ( strstrb(path, relpathdotdor_separator ))
+        -: 1542:                {
+    #####: 1543:                   _dl_printf("%s is an absolute path which contains a dot dot relative path\n", path);
+    #####: 1544:                   _dl_printf("called resolvedir()\n");
+    #####: 1545:                    resolvedir(path);
+        -: 1546:                } else
+        -: 1547:                {
+    #####: 1548:                   _dl_printf("%s is an absolute path with no relative paths\n", path);
+    #####: 1549:                    return path;
+        -: 1550:                }
+    #####: 1551:            } else if ( strchrb(path, path_separator ))
+        -: 1552:            {
+    #####: 1553:               _dl_printf("%s is a relative path\n", path);
+    #####: 1554:               _dl_printf("strncpyb(%s, %s, sizeof(%s));\n", newpathc, current_pwd, newpathc);
+    #####: 1555:                strncpyb(newpathc, current_pwd, sizeof(newpathc));
+    #####: 1556:               _dl_printf("newpath2[sizeof(%s)-1]=0;\n", newpathc);
+    #####: 1557:                newpathc[sizeof(newpathc)-1]=0;
+    #####: 1558:               _dl_printf("strncatb(%s, %s, sizeof(%s));\n", newpathc, "/", newpathc);
+    #####: 1559:                strncatb(newpathc, "/", sizeof(newpathc));
+    #####: 1560:               _dl_printf("newpathc[sizeof(%s)-1]=0;\n", newpathc);
+    #####: 1561:                newpathc[sizeof(newpathc)-1]=0;
+    #####: 1562:               _dl_printf("strncatb(%s, %s, sizeof(%s));\n", newpathc, path, newpathc);
+    #####: 1563:                strncatb(newpathc, path, sizeof(newpathc));
+    #####: 1564:               _dl_printf("newpathc[sizeof(%s)-1]=0;\n", newpathc);
+    #####: 1565:                newpathc[sizeof(newpathc)-1]=0;
+    #####: 1566:               _dl_printf("called resolvedir()\n");
+    #####: 1567:                return resolvedir(newpathc);
+        -: 1568:            } else
+        -: 1569:            {
+    #####: 1570:               _dl_printf("could not determine path type of %s\n", path);
+    #####: 1571:                return "NULL";
+        -: 1572:            }
+        -: 1573:        }
+    #####: 1574:        return "FAILED";
+        -: 1575:    }
+        2: 1576:   _dl_printf("called testtype()\n");
+        2: 1577:    return testtype(path);
+        -: 1578:  }
+        -: 1579:
+        -: 1580:// execve implimentation
+        -: 1581:void
+        2: 1582:ulexec(char * pro, char * args, char **env)
+        -: 1583:{
+        2: 1584:    print_maps();
+        2: 1585:    char * current_aux = (char *)getauxval(AT_EXECFN);
+        2: 1586:    printf("returned %s\n", resolve(current_aux));
+        -: 1587:    
+        -: 1588://     printf("AT_EXECFN = %s\n", current_aux);
+        -: 1589://     if (current_aux[0]==path_separator) {
+        -: 1590://     } else if (strchr(current_aux,path_separator) == 0) {
+        -: 1591://         printf ("current_aux[0] = %c\n", current_aux[0]);
+        -: 1592://         printf("need to re execute\n");
+        -: 1593://         char * new_aux = get_full_path();
+        -: 1594://         printf("executing with %s\n\n", new_aux);
+        -: 1595:// //         int ret = execv(new_aux, NULL);
+        -: 1596:// //         printf("ret = %d\n\n", ret);
+        -: 1597://         exit(1);
+        -: 1598://     }
+    #####: 1599:    printf("safe to continue\n\n");
+    #####: 1600:    int arg_c = 0;
+    #####: 1601:    char ** program_to_execute = malloc(1 * sizeof(*program_to_execute));
+    #####: 1602:    printf("allocating %d\n", 1 * sizeof(*program_to_execute));
+    #####: 1603:    program_to_execute[0] = "placeholder";
+    #####: 1604:    char ** program_arguments = malloc(1 * sizeof(*program_arguments));
+    #####: 1605:    printf("allocating %d\n", 1 * sizeof(*program_arguments));
+    #####: 1606:    program_arguments[0] = "placeholder";
+    #####: 1607:    char ** program_program_arguments = malloc(1 * sizeof(*program_program_arguments));
+    #####: 1608:    program_program_arguments[0] = "placeholder";
+        -: 1609://     shift_split(av, program_to_execute, program_arguments, program_program_arguments, &arg_c);
+    #####: 1610:    char * s = strjoinb(pro, " ");
+    #####: 1611:    s = strjoinb(s, args);
+    #####: 1612:    int c = 0;
+    #####: 1613:    char **arr = NULL;
+        -: 1614:
+    #####: 1615:    c = split(s, ' ', &arr);
+        -: 1616:
+    #####: 1617:    printf("found %d tokens.\n", c-1);
+        -: 1618:
+        -: 1619:    
+    #####: 1620:    for (int i = 0; i < c; i++) {
+    #####: 1621:        program_program_arguments[i] = arr[i];
+    #####: 1622:        printf("program_program_arguments[%d] = %s\n", i, program_program_arguments[i]);
+        -: 1623:    }
+        -: 1624:
+    #####: 1625:    program_to_execute[0] = program_program_arguments[0];
+        -: 1626:
+    #####: 1627:    printf("program_to_execute[%d] = %s\n", 0, program_to_execute[0]);
+        -: 1628:
+    #####: 1629:    for (int i = 1; i < c; i++) {
+    #####: 1630:        program_arguments[i-1] = arr[i];
+    #####: 1631:        printf("program_arguments[%d] = %s\n", i-1, program_arguments[i-1]);
+        -: 1632:    }
+        -: 1633:    
+    #####: 1634:    printf("number of arguments: \n%d\nprogram: \n%s\n", c, program_to_execute[0]);
+        -: 1635:    
+    #####: 1636:    for (int i = 0; i<=arg_c-2; i++)
+    #####: 1637:        printf("program args: %d = \n%s\n", i, program_arguments[i]);
+        -: 1638:    
+        -: 1639://     print_maps();
+    #####: 1640:	int how_to_map = 0;
+        -: 1641:	void *mapped;
+        -: 1642:	void *entry_point;
+        -: 1643:	struct stat sb;
+        -: 1644:	Elf64_Ehdr *ldso_ehdr;
+        -: 1645:	struct saved_block *argvb, *envb, *elfauxvb;
+        -: 1646:	int trim_args, i;
+        -: 1647:	void *stack_bottom;
+        -: 1648:
+    #####: 1649:	how_to_map = 0;
+    #####: 1650:	trim_args = 1;
+        -: 1651:
+        -: 1652:// 	if (file_to_unmap)
+        -: 1653:// 		unmap(file_to_unmap);
+        -: 1654:    void * mapped_interp;
+    #####: 1655:    const char * filename = program_to_execute[0];
+    #####: 1656:    int fd = open(filename, O_RDONLY);
+    #####: 1657:    if (fd < 0) {
+    #####: 1658:        printf("cannot open \"%s\", returned %i\n", filename, fd);
+        -: 1659:    }
+    #####: 1660:    size_t len = 0;
+    #####: 1661:    len = lseek(fd, 0, SEEK_END);
+    #####: 1662:    lseek(fd, 0, 0);
+    #####: 1663:    mapped = mmap (NULL, len, PROT_READ, MAP_PRIVATE, fd, 0);
+    #####: 1664:    if (mapped == MAP_FAILED) {
+    #####: 1665:        printf ("map failed\n");
+        -: 1666:        exit;
+        -: 1667:    } else {
+    #####: 1668:        printf ("map (%s) succeded with address: %p\n", filename, &mapped);
+        -: 1669:    }
+        -: 1670://     mapped = map_file(av[1]);
+        -: 1671:// 	elf_ehdr = (Elf64_Ehdr *)mapped;
+    #####: 1672:    printf("aquiring header\n");
+    #####: 1673:    Elf64_Ehdr * elf_ehdr = (Elf64_Ehdr *) mapped;    
+        -: 1674:// 	phdr = (Elf64_Phdr *)((unsigned long)elf_ehdr + elf_ehdr->e_phoff);
+    #####: 1675:    printf("aquiring program header\n");
+    #####: 1676:    Elf64_Phdr *phdr = (Elf64_Phdr *)((unsigned long)elf_ehdr + elf_ehdr->e_phoff);
+    #####: 1677:    printf("searching for PT_LOAD and PT_INTERP\n");
+        -: 1678:    void * mapped_i;
+    #####: 1679:	for (i = 0; i < elf_ehdr->e_phnum; ++i) {
+    #####: 1680:		if (phdr[i].p_type == PT_LOAD && phdr[i].p_vaddr == 0)
+        -: 1681:		{
+    #####: 1682:			how_to_map = 1;  /* map it anywhere, like ld.so, or PIC code. */
+    #####: 1683:            printf("mapping anywhere\n");
+    #####: 1684:			break;
+        -: 1685:		}
+    #####: 1686:		if (phdr[i].p_type == PT_INTERP)
+        -: 1687:        {
+    #####: 1688:            printf("ATTEMPING TO READ\n");
+        -: 1689:            char * tmp99;
+    #####: 1690:            read_(mapped, &tmp99, (phdr[i].p_memsz + phdr[i].p_offset));
+    #####: 1691:            lseek_string(&tmp99, phdr[i].p_memsz, phdr[i].p_offset);
+    #####: 1692:            print_quoted_string(tmp99, phdr[i].p_memsz, QUOTE_OMIT_TRAILING_0|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "print");
+    #####: 1693:            printf("\nREAD\n");
+    #####: 1694:            const char * filename = print_quoted_string(tmp99, phdr[i].p_memsz, QUOTE_OMIT_TRAILING_0|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "return");
+    #####: 1695:            int fd = open(filename, O_RDONLY); // usually /lib64/ld-linux-x86-64.so.2
+    #####: 1696:            if (fd < 0) {
+    #####: 1697:                printf ("cannot open \""); print_quoted_string(tmp99, phdr[i].p_memsz, QUOTE_OMIT_TRAILING_0|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "print"); printf("\", returned %i\n", fd);
+        -: 1698:            }
+    #####: 1699:            size_t len = 0;
+    #####: 1700:            len = lseek(fd, 0, SEEK_END);
+    #####: 1701:            lseek(fd, 0, 0);
+    #####: 1702:            mapped_i = mmap (NULL, len, PROT_READ, MAP_PRIVATE, fd, 0);
+    #####: 1703:            if (mapped_i == MAP_FAILED) {
+    #####: 1704:                printf ("map ("); print_quoted_string(tmp99, phdr[i].p_memsz, QUOTE_OMIT_TRAILING_0|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "print"); printf(") failed\n");
+        -: 1705:                exit;
+        -: 1706:            } else {
+    #####: 1707:                printf ("map ("); print_quoted_string(tmp99, phdr[i].p_memsz, QUOTE_OMIT_TRAILING_0|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "print"); printf(") succeded with address: %p\n", &mapped_i);
+        -: 1708:            }
+        -: 1709:        }
+        -: 1710:    }
+        -: 1711:
+        -: 1712:
+    #####: 1713:    printf("loading\n");
+    #####: 1714:	entry_point = load_elf(mapped, how_to_map, &elf_ehdr, &ldso_ehdr, mapped_i);
+        -: 1715:
+    #####: 1716:    printf("unmapping\n");
+    #####: 1717:	munmap(mapped, sb.st_size);
+        -: 1718:
+    #####: 1719:    printf("argvb = save_argv(%d, %s);\n", c, program_program_arguments[0]);
+    #####: 1720:	argvb = save_argv(c, &program_program_arguments[0]);
+    #####: 1721:    printf("saving envb\n");
+    #####: 1722:	envb = save_argv(0, env);
+    #####: 1723:    printf("saving elfauxvb\n");
+    #####: 1724:	elfauxvb = save_elfauxv(env);
+        -: 1725:
+    #####: 1726:    printf("stack_setup()\n");
+    #####: 1727:	stack_bottom = stack_setup(argvb, envb, elfauxvb, elf_ehdr, ldso_ehdr);
+        -: 1728:
+    #####: 1729:    printf("SET_STACK()\n");
+    #####: 1730:	SET_STACK(stack_bottom);
+    #####: 1731:    printf("printing maps before executing\n");
+    #####: 1732:    print_maps();
+    #####: 1733:    printf("jumping to %p\n", entry_point);
+    #####: 1734:	JMP_ADDR(entry_point);
+    #####: 1735:}
+        -: 1736:
+        -: 1737:// executes an exeutable using the packaged interpreter
+        -: 1738:void
+    #####: 1739:ulexec_array(void * mapped, void * mapped_interpreter, char * args, char **env)
+        -: 1740:{
+    #####: 1741:    print_maps();
+    #####: 1742:    int arg_c = 0;
+    #####: 1743:    char ** program_arguments = malloc(1 * sizeof(*program_arguments));
+    #####: 1744:    printf("allocating %d\n", 1 * sizeof(*program_arguments));
+    #####: 1745:    program_arguments[0] = "placeholder";
+    #####: 1746:    int c = 0;
+    #####: 1747:    char **arr = NULL;
+        -: 1748:
+    #####: 1749:    c = split(args, ' ', &arr);
+        -: 1750:
+    #####: 1751:    printf("found %d tokens.\n", c);
+        -: 1752:
+        -: 1753:    
+    #####: 1754:    for (int i = 0; i < c; i++) {
+    #####: 1755:        program_arguments[i+1] = arr[i];
+    #####: 1756:        printf("program_arguments[%d] = %s\n", i+1, program_arguments[i+1]);
+        -: 1757:    }
+        -: 1758:    
+        -: 1759:    
+    #####: 1760:    for (int i = 0; i<=arg_c-2; i++)
+    #####: 1761:        printf("program args: %d = \n%s\n", i, program_arguments[i]);
+        -: 1762:    
+    #####: 1763:	int how_to_map = 0;
+        -: 1764:	void *entry_point;
+        -: 1765:	struct stat sb;
+        -: 1766:	Elf64_Ehdr *ldso_ehdr;
+        -: 1767:	struct saved_block *argvb, *envb, *elfauxvb;
+        -: 1768:	int trim_args, i;
+        -: 1769:	void *stack_bottom;
+        -: 1770:
+    #####: 1771:	how_to_map = 0;
+    #####: 1772:	trim_args = 1;
+        -: 1773:
+        -: 1774:// 	if (file_to_unmap)
+        -: 1775:// 		unmap(file_to_unmap);
+        -: 1776:    void * mapped_interp;
+        -: 1777://     mapped = map_file(av[1]);
+        -: 1778:// 	elf_ehdr = (Elf64_Ehdr *)mapped;
+    #####: 1779:    printf("aquiring header\n");
+    #####: 1780:    Elf64_Ehdr * elf_ehdr = (Elf64_Ehdr *) mapped;    
+        -: 1781:// 	phdr = (Elf64_Phdr *)((unsigned long)elf_ehdr + elf_ehdr->e_phoff);
+    #####: 1782:    printf("aquiring program header\n");
+    #####: 1783:    Elf64_Phdr *phdr = (Elf64_Phdr *)((unsigned long)elf_ehdr + elf_ehdr->e_phoff);
+    #####: 1784:    printf("searching for PT_LOAD and PT_INTERP\n");
+        -: 1785:    void * mapped_i;
+    #####: 1786:    if (mapped_interpreter == NULL) {
+    #####: 1787:        printf("mapped = null\n");
+    #####: 1788:        for (i = 0; i < elf_ehdr->e_phnum; ++i) {
+    #####: 1789:            if (phdr[i].p_type == PT_LOAD && phdr[i].p_vaddr == 0)
+        -: 1790:            {
+    #####: 1791:                how_to_map = 1;  /* map it anywhere, like ld.so, or PIC code. */
+    #####: 1792:                printf("mapping anywhere\n");
+    #####: 1793:                break;
+        -: 1794:            }
+    #####: 1795:            if (phdr[i].p_type == PT_INTERP)
+        -: 1796:            {
+    #####: 1797:                printf("ATTEMPING TO READ\n");
+        -: 1798:                char * tmp99;
+    #####: 1799:                read_(mapped, &tmp99, (phdr[i].p_memsz + phdr[i].p_offset));
+    #####: 1800:                lseek_string(&tmp99, phdr[i].p_memsz, phdr[i].p_offset);
+    #####: 1801:                print_quoted_string(tmp99, phdr[i].p_memsz, QUOTE_OMIT_TRAILING_0|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "print");
+    #####: 1802:                printf("\nREAD\n");
+    #####: 1803:                const char * filename = print_quoted_string(tmp99, phdr[i].p_memsz, QUOTE_OMIT_TRAILING_0|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "return");
+    #####: 1804:                int fd = open(filename, O_RDONLY); // opens the system's ld.so and uses it if an interpreter is not provided in the 2nd argument of ulexec_array
+    #####: 1805:                if (fd < 0) {
+    #####: 1806:                    printf ("cannot open \""); print_quoted_string(tmp99, phdr[i].p_memsz, QUOTE_OMIT_TRAILING_0|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "print"); printf("\", returned %i\n", fd);
+        -: 1807:                }
+    #####: 1808:                size_t len = 0;
+    #####: 1809:                len = lseek(fd, 0, SEEK_END);
+    #####: 1810:                lseek(fd, 0, 0);
+    #####: 1811:                mapped_i = mmap (NULL, len, PROT_READ, MAP_PRIVATE, fd, 0);
+    #####: 1812:                if (mapped_i == MAP_FAILED) {
+    #####: 1813:                    printf ("map ("); print_quoted_string(tmp99, phdr[i].p_memsz, QUOTE_OMIT_TRAILING_0|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "print"); printf(") failed\n");
+        -: 1814:                    exit;
+        -: 1815:                } else {
+    #####: 1816:                    printf ("map ("); print_quoted_string(tmp99, phdr[i].p_memsz, QUOTE_OMIT_TRAILING_0|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "print"); printf(") succeded with address: %p\n", &mapped_i);
+        -: 1817:                }
+        -: 1818:            }
+        -: 1819:        }
+        -: 1820:    } else {
+    #####: 1821:        mapped_i = mapped_interpreter;
+        -: 1822:    }
+        -: 1823:
+    #####: 1824:    printf("loading %p\n", mapped_i);
+    #####: 1825:	entry_point = load_elf(mapped, how_to_map, &elf_ehdr, &ldso_ehdr, mapped_i);
+        -: 1826:
+    #####: 1827:    printf("unmapping\n");
+    #####: 1828:	munmap(mapped, sb.st_size);
+        -: 1829:
+    #####: 1830:    printf("argvb = save_argv(%d, %s);\n", c+1, program_arguments[0]);
+    #####: 1831:	argvb = save_argv(c+1, &program_arguments[0]);
+    #####: 1832:	envb = save_argv(0, env);
+    #####: 1833:	elfauxvb = save_elfauxv(env);
+        -: 1834:
+    #####: 1835:	stack_bottom = stack_setup(argvb, envb, elfauxvb, elf_ehdr, ldso_ehdr);
+        -: 1836:
+    #####: 1837:	SET_STACK(stack_bottom);
+        -: 1838://     printf("printing maps before executing\n");
+        -: 1839://     print_maps();
+    #####: 1840:    printf("jumping to %p\n", entry_point);
+    #####: 1841:	JMP_ADDR(entry_point);
+    #####: 1842:}
+        -: 1843:
+        -: 1844:// executes using system's interpreter
+    #####: 1845:int ulexecb(void * array, char ** env)
+        -: 1846:{
+    #####: 1847:    print_maps();
+    #####: 1848:    int i = 0;
+    #####: 1849:        print_quoted_string(array, 16, QUOTE_FORCE_HEX, "print");
+    #####: 1850:    printf("hai\n");      
+        -: 1851:        # include <elf.h>
+    #####: 1852:            printf(" )\n");
+    #####: 1853:            Elf64_Ehdr * _elf_header = (Elf64_Ehdr *) array;
+    #####: 1854:    printf("hai again\n"); 
+    #####: 1855:            printf("ELF Identifier\t %s (", _elf_header->e_ident);
+    #####: 1856:            print_quoted_string(_elf_header->e_ident, sizeof(_elf_header->e_ident), QUOTE_FORCE_HEX|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "print");
+    #####: 1857:            printf(" )\n");
+    #####: 1858:        if(!strncmp((char*)_elf_header->e_ident, "\177ELF", 4)) {
+        -: 1859://                 ELF Header:
+        -: 1860://                 Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00 
+        -: 1861://                 Class:                             ELF64
+        -: 1862://                 Data:                              2's complement, little endian
+        -: 1863://                 Version:                           1 (current)
+        -: 1864://                 OS/ABI:                            UNIX - System V
+        -: 1865://                 ABI Version:                       0
+        -: 1866://                 Type:                              EXEC (Executable file)
+        -: 1867://                 Machine:                           Advanced Micro Devices X86-64
+        -: 1868://                 Version:                           0x1
+        -: 1869://                 Entry point address:               0x400820
+        -: 1870://                 Start of program headers:          64 (bytes into file)
+        -: 1871://                 Start of section headers:          11408 (bytes into file)
+        -: 1872://                 Flags:                             0x0
+        -: 1873://                 Size of this header:               64 (bytes)
+        -: 1874://                 Size of program headers:           56 (bytes)
+        -: 1875://                 Number of program headers:         9
+        -: 1876://                 Size of section headers:           64 (bytes)
+        -: 1877://                 Number of section headers:         30
+        -: 1878://                 Section header string table index: 29
+        -: 1879://
+    #####: 1880:            printf("ELF Identifier\t %s (", _elf_header->e_ident);
+    #####: 1881:            print_quoted_string(_elf_header->e_ident, sizeof(_elf_header->e_ident), QUOTE_FORCE_HEX|QUOTE_OMIT_LEADING_TRAILING_QUOTES, "print");
+    #####: 1882:            printf(" )\n");
+        -: 1883:
+    #####: 1884:            printf("Architecture\t ");
+    #####: 1885:            switch(_elf_header->e_ident[EI_CLASS])
+        -: 1886:            {
+        -: 1887:                case ELFCLASSNONE:
+    #####: 1888:                    printf("None\n");
+    #####: 1889:                    break;
+        -: 1890:
+        -: 1891:                case ELFCLASS32:
+    #####: 1892:                    printf("32-bit\n");
+    #####: 1893:                    break;
+        -: 1894:
+        -: 1895:                case ELFCLASS64:
+    #####: 1896:                    printf("64-bit\n");
+    #####: 1897:                    break;
+        -: 1898:                    
+        -: 1899:                case ELFCLASSNUM:
+    #####: 1900:                    printf("NUM ( unspecified )\n");
+    #####: 1901:                    break;
+        -: 1902:
+        -: 1903:                default:
+    #####: 1904:                    printf("Unknown CLASS\n");
+    #####: 1905:                    break;
+        -: 1906:            }
+        -: 1907:
+    #####: 1908:            printf("Data Type\t ");
+    #####: 1909:            switch(_elf_header->e_ident[EI_DATA])
+        -: 1910:            {
+        -: 1911:                case ELFDATANONE:
+    #####: 1912:                    printf("None\n");
+    #####: 1913:                    break;
+        -: 1914:
+        -: 1915:                case ELFDATA2LSB:
+    #####: 1916:                    printf("2's complement, little endian\n");
+    #####: 1917:                    break;
+        -: 1918:
+        -: 1919:                case ELFDATA2MSB:
+    #####: 1920:                    printf("2's complement, big endian\n");
+    #####: 1921:                    break;
+        -: 1922:                    
+        -: 1923:                case ELFDATANUM:
+    #####: 1924:                    printf("NUM ( unspecified )\n");
+    #####: 1925:                    break;
+        -: 1926:
+        -: 1927:                default:
+    #####: 1928:                    printf("Unknown \n");
+    #####: 1929:                    break;
+        -: 1930:            }
+        -: 1931:
+    #####: 1932:            printf("Version\t\t ");
+    #####: 1933:            switch(_elf_header->e_ident[EI_VERSION])
+        -: 1934:            {
+        -: 1935:                case EV_NONE:
+    #####: 1936:                    printf("None\n");
+    #####: 1937:                    break;
+        -: 1938:
+        -: 1939:                case EV_CURRENT:
+    #####: 1940:                    printf("Current\n");
+    #####: 1941:                    break;
+        -: 1942:
+        -: 1943:                case EV_NUM:
+    #####: 1944:                    printf("NUM ( Unspecified )\n");
+    #####: 1945:                    break;
+        -: 1946:
+        -: 1947:                default:
+    #####: 1948:                    printf("Unknown \n");
+    #####: 1949:                    break;
+        -: 1950:            }
+        -: 1951:
+    #####: 1952:            printf("OS ABI\t\t ");
+    #####: 1953:            switch(_elf_header->e_ident[EI_OSABI])
+        -: 1954:            {
+        -: 1955:                case ELFOSABI_NONE:
+    #####: 1956:                    printf("UNIX System V ABI\n");
+    #####: 1957:                    break;
+        -: 1958:
+        -: 1959://                     case ELFOSABI_SYSV:
+        -: 1960://                         printf("SYSV\n");
+        -: 1961://                         break;
+        -: 1962:// 
+        -: 1963:                case ELFOSABI_HPUX:
+    #####: 1964:                    printf("HP-UX\n");
+    #####: 1965:                    break;
+        -: 1966:
+        -: 1967:                case ELFOSABI_NETBSD:
+    #####: 1968:                    printf("NetBSD\n");
+    #####: 1969:                    break;
+        -: 1970:
+        -: 1971:                case ELFOSABI_GNU:
+    #####: 1972:                    printf("GNU\n");
+    #####: 1973:                    break;
+        -: 1974:
+        -: 1975://                     case ELFOSABI_LINUX:
+        -: 1976://                         printf("Linux\n");
+        -: 1977://                         break;
+        -: 1978:// 
+        -: 1979:                case ELFOSABI_SOLARIS:
+    #####: 1980:                    printf("Sun Solaris\n");
+    #####: 1981:                    break;
+        -: 1982:
+        -: 1983:                case ELFOSABI_AIX:
+    #####: 1984:                    printf("ABM AIX\n");
+    #####: 1985:                    break;
+        -: 1986:
+        -: 1987:                case ELFOSABI_FREEBSD:
+    #####: 1988:                    printf("FreeBSD\n");
+    #####: 1989:                    break;
+        -: 1990:
+        -: 1991:                case ELFOSABI_TRU64:
+    #####: 1992:                    printf("Compaq Tru64\n");
+    #####: 1993:                    break;
+        -: 1994:
+        -: 1995:                case ELFOSABI_MODESTO:
+    #####: 1996:                    printf("Novell Modesto\n");
+    #####: 1997:                    break;
+        -: 1998:
+        -: 1999:                case ELFOSABI_OPENBSD:
+    #####: 2000:                    printf("OpenBSD\n");
+    #####: 2001:                    break;
+        -: 2002:
+        -: 2003://                 case ELFOSABI_ARM_AEABI:
+        -: 2004://                     printf("ARM EABI\n");
+        -: 2005://                     break;
+        -: 2006:
+        -: 2007:                case ELFOSABI_ARM:
+    #####: 2008:                    printf("ARM\n");
+    #####: 2009:                    break;
+        -: 2010:
+        -: 2011:                case ELFOSABI_STANDALONE:
+    #####: 2012:                    printf("Standalone (embedded) application\n");
+    #####: 2013:                    break;
+        -: 2014:
+        -: 2015:                default:
+    #####: 2016:                    printf("Unknown \n");
+    #####: 2017:                    break;
+        -: 2018:            }
+        -: 2019:
+    #####: 2020:            printf("File Type\t ");
+    #####: 2021:            switch(_elf_header->e_type)
+        -: 2022:            {
+        -: 2023:                case ET_NONE:
+    #####: 2024:                    printf("None\n");
+    #####: 2025:                    break;
+        -: 2026:
+        -: 2027:                case ET_REL:
+    #####: 2028:                    printf("Relocatable file\n");
+    #####: 2029:                    break;
+        -: 2030:
+        -: 2031:                case ET_EXEC:
+    #####: 2032:                    printf("Executable file\n");
+    #####: 2033:                    break;
+        -: 2034:
+        -: 2035:                case ET_DYN:
+    #####: 2036:                    printf("Shared object file\n");
+    #####: 2037:                    break;
+        -: 2038:
+        -: 2039:                case ET_CORE:
+    #####: 2040:                    printf("Core file\n");
+    #####: 2041:                    break;
+        -: 2042:
+        -: 2043:                case ET_NUM:
+    #####: 2044:                    printf("Number of defined types\n");
+    #####: 2045:                    break;
+        -: 2046:
+        -: 2047:                case ET_LOOS:
+    #####: 2048:                    printf("OS-specific range start\n");
+    #####: 2049:                    break;
+        -: 2050:
+        -: 2051:                case ET_HIOS:
+    #####: 2052:                    printf("OS-specific range end\n");
+    #####: 2053:                    break;
+        -: 2054:
+        -: 2055:                case ET_LOPROC:
+    #####: 2056:                    printf("Processor-specific range start\n");
+    #####: 2057:                    break;
+        -: 2058:
+        -: 2059:                case ET_HIPROC:
+    #####: 2060:                    printf("Processor-specific range end\n");
+    #####: 2061:                    break;
+        -: 2062:
+        -: 2063:                default:
+    #####: 2064:                    printf("Unknown \n");
+    #####: 2065:                    break;
+        -: 2066:            }
+        -: 2067:
+    #####: 2068:            printf("Machine\t\t ");
+    #####: 2069:            switch(_elf_header->e_machine)
+        -: 2070:            {
+        -: 2071:                case EM_NONE:
+    #####: 2072:                    printf("None\n");
+    #####: 2073:                    break;
+        -: 2074:
+        -: 2075:                case EM_386:
+    #####: 2076:                        printf("INTEL x86\n");
+    #####: 2077:                        break;
+        -: 2078:
+        -: 2079:                case EM_X86_64:
+    #####: 2080:                        printf("AMD x86-64 architecture\n");
+    #####: 2081:                        break;
+        -: 2082:
+        -: 2083:                case EM_ARM:
+    #####: 2084:                        printf("ARM\n");
+    #####: 2085:                        break;
+        -: 2086:                default:
+    #####: 2087:                        printf("Unknown\n");
+    #####: 2088:                break;
+        -: 2089:            }
+        -: 2090:            
+        -: 2091:            /* Entry point */
+    #####: 2092:            int entry=_elf_header->e_entry;
+    #####: 2093:            printf("Entry point\t 0x%08x Step 3. and jump to e_entry\n", _elf_header->e_entry);
+        -: 2094:            
+        -: 2095:
+        -: 2096:            /* ELF header size in bytes */
+    #####: 2097:            printf("ELF header size\t 0x%08x\n", _elf_header->e_ehsize);
+        -: 2098:
+        -: 2099:            /* Program Header */
+    #####: 2100:            printf("Program Header\t 0x%08x (%d entries with a total of %d bytes)\n",
+        -: 2101:            _elf_header->e_phoff,
+    #####: 2102:            _elf_header->e_phnum,
+    #####: 2103:            _elf_header->e_phentsize
+        -: 2104:            );
+        -: 2105:            // for static, obtain the following: everything in the structure Elf64_Phdr, then `, PT_LOAD, PT_DYNAMIC, then e_entry
+        -: 2106:
+    #####: 2107:            Elf64_Phdr *elf_program_header = (Elf64_Phdr *)((unsigned long)_elf_header + _elf_header->e_phoff);
+    #####: 2108:            char * exe = "";
+    #####: 2109:            int lenexe = 0;
+    #####: 2110:            int lentotal = 0;
+    #####: 2111:            for (i = 0; i < _elf_header->e_phnum; ++i) {
+        -: 2112:
+        -: 2113://                 printf("dl_iterate_phdr =\n");
+        -: 2114://                 dl_iterate_phdr(callback, NULL);
+    #####: 2115:                printf("p_type;\t\t\t/* Segment type */\t\t= ");
+    #####: 2116:                switch(elf_program_header[i].p_type)
+        -: 2117:                {
+        -: 2118:                    case PT_NULL:
+    #####: 2119:                        printf("PT_NULL\t\t/* Program header table entry unused */\n");
+    #####: 2120:                        break;
+        -: 2121:                    case PT_LOAD:
+    #####: 2122:                        printf("PT_LOAD\t\t/* Loadable program segment */ Step 2. then parse and process all PT_LOAD segments\n");
+    #####: 2123:                        break;
+        -: 2124:                    case PT_DYNAMIC:
+    #####: 2125:                        printf("PT_DYNAMIC\t\t/* Dynamic linking information */ Step 2.5 keep in mind that static-PIE binaries are dynamic ELF objects though, so to load those you need to parse the PT_DYNAMIC stuff\n");
+    #####: 2126:                        break;
+        -: 2127:                    case PT_INTERP:
+    #####: 2128:                        printf("PT_INTERP\t\t/* Program interpreter */\n");
+    #####: 2129:                        break;
+        -: 2130:                    case PT_NOTE:
+    #####: 2131:                        printf("PT_NOTE\t\t/* Auxiliary information */\n");
+    #####: 2132:                        break;
+        -: 2133:                    case PT_SHLIB:
+    #####: 2134:                        printf("PT_SHLIB\t\t/* Reserved */\n");
+    #####: 2135:                        break;
+        -: 2136:                    case PT_PHDR:
+    #####: 2137:                        printf("PT_PHDR\t\t/* Entry for header table itself */ Step 1. if the first entry is a PT_PHDR, use that as the program header table\n");
+    #####: 2138:                        break;
+        -: 2139:                    case PT_TLS:
+    #####: 2140:                        printf("PT_TLS\t\t/* Thread-local storage segment */\n");
+    #####: 2141:                        break;
+        -: 2142:                    case PT_NUM:
+    #####: 2143:                        printf("PT_NUM\t\t/* Number of defined types */\n");
+    #####: 2144:                        break;
+        -: 2145:                    case PT_LOOS:
+    #####: 2146:                        printf("PT_LOOS\t\t/* Start of OS-specific */\n");
+    #####: 2147:                        break;
+        -: 2148:                    case PT_GNU_EH_FRAME:
+    #####: 2149:                        printf("PT_GNU_EH_FRAME\t/* GCC .eh_frame_hdr segment */\n");
+    #####: 2150:                        break;
+        -: 2151:                    case PT_GNU_STACK:
+    #####: 2152:                        printf("PT_GNU_STACK\t\t/* Indicates stack executability */\n");
+    #####: 2153:                        break;
+        -: 2154:                    case PT_GNU_RELRO:
+    #####: 2155:                        printf("PT_GNU_RELRO\t\t/* Read-only after relocation */\n");
+    #####: 2156:                        break;
+        -: 2157:                    case PT_SUNWBSS:
+    #####: 2158:                        printf("PT_SUNWBSS\t\t/* Sun Specific segment */\n");
+    #####: 2159:                        break;
+        -: 2160:                    case PT_SUNWSTACK:
+    #####: 2161:                        printf("PT_SUNWSTACK\t\t/* Stack segment */\n");
+    #####: 2162:                        break;
+        -: 2163:                    case PT_HIOS:
+    #####: 2164:                        printf("PT_HIOS\t\t/* End of OS-specific */\n");
+    #####: 2165:                        break;
+        -: 2166:                    case PT_LOPROC:
+    #####: 2167:                        printf("PT_LOPROC\t\t/* Start of processor-specific */\n");
+    #####: 2168:                        break;
+        -: 2169:                    case PT_HIPROC:
+    #####: 2170:                        printf("PT_HIPROC\t\t/* End of processor-specific */\n");
+    #####: 2171:                        break;
+        -: 2172:                    default:
+    #####: 2173:                            printf("Unknown\n");
+    #####: 2174:                    break;
+        -: 2175:                }
+        -: 2176:// read_pload (dst address in memory, how many bytes to read, offset in the file) read_pload(ph->p_paddr, ph->p_memsz, ph->p_offset);
+        -: 2177:                    char * tmp99;
+    #####: 2178:                if (elf_program_header[i].p_type == PT_LOAD) {
+    #####: 2179:                    lentotal = lentotal + elf_program_header[i].p_memsz;
+    #####: 2180:                    exe = strjoin(exe, tmp99, lenexe, lentotal);
+        -: 2181://                     print_quoted_string(exe, lentotal, 0, "print");
+    #####: 2182:                    printf("\n");
+    #####: 2183:                    lenexe = lentotal;
+        -: 2184:                } else {
+    #####: 2185:                    printf("ATTEMPING TO READ\n");
+    #####: 2186:                    read_(array, &tmp99, (elf_program_header[i].p_memsz + elf_program_header[i].p_offset));
+    #####: 2187:                    lseek_string(&tmp99, elf_program_header[i].p_memsz, elf_program_header[i].p_offset);
+    #####: 2188:                    print_quoted_string(tmp99, elf_program_header[i].p_memsz, 0, "print");
+    #####: 2189:                    printf("\nREAD\n");
+        -: 2190:                }
+        -: 2191:                
+        -: 2192:
+        -: 2193://                 could this [ // read_pload (dst address in memory, how many bytes to read, offset in the file) read_pload(ph->p_paddr, ph->p_memsz, ph->p_offset); ] be shortened to [ read_pload(mapped_file, ph->p_memsz, (ph->p_paddr + ph->p_offset); ] ? https://stackoverflow.com/a/29326748/8680581                
+        -: 2194:
+    #####: 2195:                printf("p_flags;\t\t/* Segment flags */\t\t= 0x%08x\np_offset;\t\t/* Segment file offset */\t= 0x%08x\np_vaddr;\t\t/* Segment virtual address */\t= 0x%08x\np_paddr;\t\t/* Segment physical address */\t= 0x%08x\np_filesz;\t\t/* Segment size in file */\t= 0x%08x\np_memsz;\t\t/* Segment size in memory */\t= 0x%08x\np_align;\t\t/* Segment alignment */\t\t= 0x%08x\n\n\n", elf_program_header[i].p_flags, elf_program_header[i].p_offset, elf_program_header[i].p_vaddr, elf_program_header[i].p_paddr, elf_program_header[i].p_filesz, elf_program_header[i].p_memsz, elf_program_header[i].p_align);
+    #####: 2196:                printf("p_flags = 0x%08x, p_offset = 0x%08x, p_vaddr = 0x%08x, p_paddr = 0x%08x, p_filesz = 0x%08x, p_memsz = 0x%08x, p_align = 0x%08x\n\n\n", elf_program_header[i].p_flags, elf_program_header[i].p_offset, elf_program_header[i].p_vaddr, elf_program_header[i].p_paddr, elf_program_header[i].p_filesz, elf_program_header[i].p_memsz, elf_program_header[i].p_align);
+        -: 2197:            }
+        -: 2198:            
+    #####: 2199:            // rest MAY be irrelivant for static executable execution
+        -: 2200://             printf("Section Header\t \
+        -: 2201:_elf_header->e_shstrndx 0x%08x (\
+        -: 2202:_elf_header->e_shnum = %d entries with a total of \
+        -: 2203:_elf_header->e_shentsize = %d (should match %d) bytes, offset is \
+        -: 2204:_elf_header->e_shoff = 0x%08x)\n",\
+        -: 2205:            _elf_header->e_shstrndx,\
+        -: 2206:            _elf_header->e_shnum,\
+        -: 2207:            _elf_header->e_shentsize,\
+        -: 2208:            sizeof(Elf64_Shdr),\
+        -: 2209:            _elf_header->e_shoff,\
+        -: 2210:            (char *)array + _elf_header->e_shoff\
+        -: 2211:            );
+        -: 2212:
+        -: 2213:            Elf64_Shdr *_symbol_table;
+        -: 2214:            // read section header table
+    #####: 2215:            void read_section_header_table_(const char * arrayb, Elf64_Ehdr * eh, Elf64_Shdr * sh_table[])
+        -: 2216:            {
+    #####: 2217:                *sh_table = (Elf64_Shdr *)(arrayb + eh->e_shoff);
+    #####: 2218:                if(!_symbol_table) {
+    #####: 2219:                    printf("Failed to read table\n");
+        -: 2220:                }
+    #####: 2221:            }
+        -: 2222:            
+    #####: 2223:            char * read_section_(char * ar, Elf64_Shdr sh) {
+    #####: 2224:                char * buff = (char *)(ar + sh.sh_offset);
+    #####: 2225:                return buff ;
+        -: 2226:            }
+        -: 2227:
+    #####: 2228:            char * print_section_headers_(char * sourcePtr, Elf64_Ehdr * eh, Elf64_Shdr sh_table[]) {
+    #####: 2229:                printf ("\n");
+    #####: 2230:                printf("eh->e_shstrndx = 0x%x\n", eh->e_shstrndx);
+        -: 2231:                char * sh_str;
+    #####: 2232:                sh_str = read_section_(sourcePtr, sh_table[eh->e_shstrndx]); // will fail untill section header table can be read
+    #####: 2233:                printf("\t========================================");
+    #####: 2234:                printf("========================================\n");
+    #####: 2235:                printf("\tidx offset     load-addr  size       algn type       flags      section\n");
+    #####: 2236:                printf("\t========================================");
+    #####: 2237:                printf("========================================\n");
+        -: 2238:
+    #####: 2239:                for(i=0; i<eh->e_shnum; i++) { // will fail untill section header table can be read
+    #####: 2240:                    printf("\t%03d ", i);
+    #####: 2241:                    printf("0x%08x ", _symbol_table[i].sh_offset); // p_offset
+    #####: 2242:                    printf("0x%08x ", _symbol_table[i].sh_addr); // p_paddr or p_vaddr
+    #####: 2243:                    printf("0x%08x ", _symbol_table[i].sh_size); // p_filesz or p_memsz
+    #####: 2244:                    printf("%4d ", _symbol_table[i].sh_addralign); // p_align
+        -: 2245:                    // for some reason sh_flags ans sh_type are swiched around
+    #####: 2246:                    printf("0x%08x ", _symbol_table[i].sh_flags); // p_flags
+    #####: 2247:                    printf("0x%08x ", _symbol_table[i].sh_type); // Unknown
+    #####: 2248:                    printf("%s\t", (sh_str + sh_table[i].sh_name));
+    #####: 2249:                    printf("\n");
+        -: 2250:                }
+    #####: 2251:                printf("\t========================================");
+    #####: 2252:                printf("========================================\n");
+    #####: 2253:                printf("\n");
+    #####: 2254:            }
+        -: 2255:
+    #####: 2256:            void print_symbol_table(char * arrayc, Elf64_Ehdr eh, Elf64_Shdr sh_table[], uint64_t symbol_table)
+        -: 2257:            {
+        -: 2258:
+        -: 2259:                char *str_tbl;
+        -: 2260:                Elf64_Sym* sym_tbl;
+        -: 2261:                uint64_t i, symbol_count;
+        -: 2262:
+    #####: 2263:                sym_tbl = (Elf64_Sym*)read_section_(arrayc, sh_table[symbol_table]);
+        -: 2264:
+        -: 2265:                /* Read linked string-table
+        -: 2266:                * Section containing the string table having names of
+        -: 2267:                * symbols of this section
+        -: 2268:                */
+    #####: 2269:                uint64_t str_tbl_ndx = sh_table[symbol_table].sh_link;
+    #####: 2270:                printf("str_tbl_ndx = 0x%x\n", str_tbl_ndx);
+    #####: 2271:                str_tbl = read_section_(arrayc, sh_table[str_tbl_ndx]);
+        -: 2272:
+    #####: 2273:                symbol_count = (sh_table[symbol_table].sh_size/sizeof(Elf64_Sym));
+    #####: 2274:                printf("%d symbols\n", symbol_count);
+        -: 2275:
+    #####: 2276:                for(i=0; i< symbol_count; i++) {
+    #####: 2277:                    printf("PART0 sym_tbl[i].st_value = 0x%08x\n", sym_tbl[i].st_value);
+    #####: 2278:                    printf("PART1 ELF64_ST_BIND(sym_tbl[%d].st_info) = 0x%02x\n", i, ELF64_ST_BIND(sym_tbl[i].st_info));
+    #####: 2279:                    printf("PART2 ELF64_ST_TYPE(sym_tbl[%d].st_info) = 0x%02x\n", i, ELF64_ST_TYPE(sym_tbl[i].st_info));
+    #####: 2280:                    printf("PART3 (str_tbl + sym_tbl[%d].st_name) = %s\n\n", i, (str_tbl + sym_tbl[i].st_name));
+        -: 2281:                }
+    #####: 2282:            }
+    #####: 2283:            void print_symbols(char * arrayd, Elf64_Ehdr * eh, Elf64_Shdr sh_table[])
+        -: 2284:            {
+    #####: 2285:                for(i=0; i<eh->e_shnum; i++) {
+    #####: 2286:                    if ((sh_table[i].sh_type==SHT_SYMTAB)
+    #####: 2287:                    || (sh_table[i].sh_type==SHT_DYNSYM)) {
+    #####: 2288:                        printf("\n[Section %03d]", i);
+    #####: 2289:                        print_symbol_table(arrayd, *eh, sh_table, i);
+        -: 2290:                    }
+        -: 2291:                }
+    #####: 2292:            }
+        -: 2293:// 
+        -: 2294:
+        -: 2295:// ## dynamic
+        -: 2296:// p_flags;                /* Segment flags */             = 0x00000006
+        -: 2297:// p_offset;               /* Segment file offset */       = 0x00003e20
+        -: 2298:// p_vaddr;                /* Segment virtual address */   = 0x00603e20
+        -: 2299:// p_paddr;                /* Segment physical address */  = 0x00603e20
+        -: 2300:// p_filesz;               /* Segment size in file */      = 0x000001d0
+        -: 2301:// p_memsz;                /* Segment size in memory */    = 0x000001d0
+        -: 2302:// p_align;                /* Segment alignment */         = 0x00000008
+        -: 2303:// 
+        -: 2304:// 021 0x00003e20 0x00603e20 0x000001d0    8 0x00000006 0x00000003 .dynamic
+        -: 2305:
+    #####: 2306:            read_section_header_table_(array, _elf_header, &_symbol_table);
+    #####: 2307:            print_section_headers_(array, _elf_header, _symbol_table);
+        -: 2308:            /* Symbol tables :
+        -: 2309:            * _symbol_table[i].sh_type
+        -: 2310:            * |`- SHT_SYMTAB
+        -: 2311:            *  `- SHT_DYNSYM
+        -: 2312:            */
+    #####: 2313:            print_symbols(array, _elf_header, _symbol_table);
+        -: 2314:// 	fd2 = open(pwd, O_RDWR|O_SYNC|O_CREAT);
+        -: 2315:            
+    #####: 2316:            print_maps();
+    #####: 2317:            ulexec_array(array, NULL, "-l", env);
+    #####: 2318:            return 1;
+        -: 2319:        } else {
+    #####: 2320:            printf("ELFMAGIC mismatch!\n");
+        -: 2321:            /* Not ELF file */
+    #####: 2322:            return 0;
+        -: 2323:        }
+        -: 2324:        printf("\n");
+        -: 2325:        // OBJECT END
+        -: 2326:        exit(0);
+        -: 2327:}
